@@ -277,6 +277,7 @@ struct fuse_args_pages {
 	struct page **pages;
 	struct fuse_page_desc *descs;
 	unsigned int num_pages;
+	bool page_locked;
 };
 
 #define FUSE_ARGS(args) struct fuse_args args = {}
