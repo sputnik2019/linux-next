@@ -1273,6 +1273,8 @@ uint64_t xdr_align_data(struct xdr_stream *xdr, uint64_t offset, uint32_t length
 	bytes = xdr->nwords << 2;
 	if (length < bytes)
 		bytes = length;
+	if (bytes < length)
+		length = bytes;
 
 	/* Move page data to the left */
 	if (from > offset) {
