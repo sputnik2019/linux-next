@@ -1264,6 +1264,8 @@ uint64_t xdr_align_data(struct xdr_stream *xdr, uint64_t offset, uint32_t length
 	bytes = xdr_stream_remaining(xdr);
 	if (length < bytes)
 		bytes = length;
+	if (bytes < length)
+		length = bytes;
 
 	/* Move page data to the left */
 	if (from > offset) {
@@ -1305,6 +1307,7 @@ uint64_t xdr_expand_hole(struct xdr_stream *xdr, uint64_t offset, uint64_t lengt
 		unsigned int res = _shift_data_right_tail(buf, from + bytes - shift, shift);
 		truncated = shift - res;
 		xdr->nwords -= XDR_QUADLEN(truncated);
+		buf->len -= XDR_QUADLEN(truncated) << 2;
 		bytes -= shift;
 	}
 
@@ -1316,7 +1319,7 @@ uint64_t xdr_expand_hole(struct xdr_stream *xdr, uint64_t offset, uint64_t lengt
 					bytes);
 	_zero_pages(buf->pages, buf->page_base + offset, length);
 
-	buf->len += length - (from - offset) - truncated;
+	buf->len += length - (from - offset);
 	xdr_set_page(xdr, offset + length, xdr_stream_remaining(xdr));
 	return length;
 }
