@@ -1541,11 +1541,13 @@ static int kernel_migrate_pages(pid_t pid, unsigned long maxnode,
 
 	/*
 	 * Check if this process has the right to modify the specified process.
-	 * Use the regular "ptrace_may_access()" checks.
+	 * Use the regular "mm_access()" checks.
 	 */
-	if (!ptrace_may_access(task, PTRACE_MODE_READ_REALCREDS)) {
+	mm = mm_access(task, PTRACE_MODE_READ_REALCREDS);
+	if (IS_ERR(mm)) {
 		rcu_read_unlock();
-		err = -EPERM;
+		err = PTR_ERR(mm);
+		mm = NULL;
 		goto out_put;
 	}
 	rcu_read_unlock();
@@ -1566,7 +1568,6 @@ static int kernel_migrate_pages(pid_t pid, unsigned long maxnode,
 	if (err)
 		goto out_put;
 
-	mm = get_task_mm(task);
 	put_task_struct(task);
 
 	if (!mm) {
@@ -1584,6 +1585,8 @@ out:
 	return err;
 
 out_put:
+	if (mm)
+		mmput(mm);
 	put_task_struct(task);
 	goto out;
 

@@ -1904,6 +1904,7 @@ static struct mm_struct *find_mm_struct(pid_t pid, nodemask_t *mem_nodes)
 {
 	struct task_struct *task;
 	struct mm_struct *mm;
+	int rc;
 
 	/*
 	 * There is no need to check if current process has the right to modify
@@ -1926,20 +1927,23 @@ static struct mm_struct *find_mm_struct(pid_t pid, nodemask_t *mem_nodes)
 
 	/*
 	 * Check if this process has the right to modify the specified
-	 * process. Use the regular "ptrace_may_access()" checks.
+	 * process. Use the regular "mm_access()" checks.
 	 */
-	if (!ptrace_may_access(task, PTRACE_MODE_READ_REALCREDS)) {
+	mm = mm_access(task, PTRACE_MODE_READ_REALCREDS);
+	if (IS_ERR(mm)) {
 		rcu_read_unlock();
-		mm = ERR_PTR(-EPERM);
 		goto out;
 	}
 	rcu_read_unlock();
 
-	mm = ERR_PTR(security_task_movememory(task));
-	if (IS_ERR(mm))
+	rc = security_task_movememory(task);
+	if (rc) {
+		if (mm)
+			mmput(mm);
+		mm = ERR_PTR(rc);
 		goto out;
+	}
 	*mem_nodes = cpuset_mems_allowed(task);
-	mm = get_task_mm(task);
 out:
 	put_task_struct(task);
 	if (!mm)
