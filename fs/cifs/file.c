@@ -44,6 +44,7 @@
 #include "cifs_fs_sb.h"
 #include "fscache.h"
 #include "smbdirect.h"
+#include "fs_context.h"
 
 static inline int cifs_convert_flags(unsigned int flags)
 {
@@ -416,6 +417,8 @@ static void cifsFileInfo_put_work(struct work_struct *work)
  * cifsFileInfo_put - release a reference of file priv data
  *
  * Always potentially wait for oplock handler. See _cifsFileInfo_put().
+ *
+ * @cifs_file:	cifs/smb3 specific info (eg refcounts) for an open file
  */
 void cifsFileInfo_put(struct cifsFileInfo *cifs_file)
 {
@@ -431,8 +434,11 @@ void cifsFileInfo_put(struct cifsFileInfo *cifs_file)
  *
  * If @wait_for_oplock_handler is true and we are releasing the last
  * reference, wait for any running oplock break handler of the file
- * and cancel any pending one. If calling this function from the
- * oplock break handler, you need to pass false.
+ * and cancel any pending one.
+ *
+ * @cifs_file:	cifs/smb3 specific info (eg refcounts) for an open file
+ * @wait_oplock_handler: must be false if called from oplock_break_handler
+ * @offload:	not offloaded on close and oplock breaks
  *
  */
 void _cifsFileInfo_put(struct cifsFileInfo *cifs_file,
@@ -566,7 +572,7 @@ int cifs_open(struct inode *inode, struct file *file)
 				le64_to_cpu(tcon->fsUnixInfo.Capability))) {
 		/* can not refresh inode info since size could be stale */
 		rc = cifs_posix_open(full_path, &inode, inode->i_sb,
-				cifs_sb->mnt_file_mode /* ignored */,
+				cifs_sb->ctx->file_mode /* ignored */,
 				file->f_flags, &oplock, &fid.netfid, xid);
 		if (rc == 0) {
 			cifs_dbg(FYI, "posix open succeeded\n");
@@ -735,7 +741,7 @@ cifs_reopen_file(struct cifsFileInfo *cfile, bool can_flush)
 						~(O_CREAT | O_EXCL | O_TRUNC);
 
 		rc = cifs_posix_open(full_path, NULL, inode->i_sb,
-				     cifs_sb->mnt_file_mode /* ignored */,
+				     cifs_sb->ctx->file_mode /* ignored */,
 				     oflags, &oplock, &cfile->fid.netfid, xid);
 		if (rc == 0) {
 			cifs_dbg(FYI, "posix reopen succeeded\n");
