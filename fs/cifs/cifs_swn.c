@@ -447,7 +447,7 @@ int cifs_swn_notify(struct sk_buff *skb, struct genl_info *info)
 		int state;
 
 		if (info->attrs[CIFS_GENL_ATTR_SWN_RESOURCE_NAME]) {
-			nla_strlcpy(name, info->attrs[CIFS_GENL_ATTR_SWN_RESOURCE_NAME],
+			nla_strscpy(name, info->attrs[CIFS_GENL_ATTR_SWN_RESOURCE_NAME],
 					sizeof(name));
 		} else {
 			cifs_dbg(FYI, "%s: missing resource name attribute\n", __func__);
