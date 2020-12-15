@@ -343,6 +343,10 @@ static int gpiochip_set_desc_names(struct gpio_chip *gc)
 	for (i = 0; i != gc->ngpio; ++i) {
 		struct gpio_desc *gpiod;
 
+		/* Skip NULL or '(empty string)' names */
+		if (!gc->names[i] || !strlen(gc->names[i]))
+			continue;
+
 		gpiod = gpio_name_to_desc(gc->names[i]);
 		if (gpiod && (gpiod->gdev == gdev)) {
 			dev_err(&gdev->dev,
@@ -352,8 +356,12 @@ static int gpiochip_set_desc_names(struct gpio_chip *gc)
 	}
 
 	/* Then add all names to the GPIO descriptors */
-	for (i = 0; i != gc->ngpio; ++i)
+	for (i = 0; i != gc->ngpio; ++i) {
+		/* Skip NULL or '(empty string)' names */
+		if (!gc->names[i] || !strlen(gc->names[i]))
+			continue;
 		gdev->descs[i].name = gc->names[i];
+	}
 
 	return 0;
 }
@@ -404,6 +412,9 @@ static int devprop_gpiochip_set_names(struct gpio_chip *chip)
 	for (i = 0; i < count; i++) {
 		struct gpio_desc *gpiod;
 
+		/* Skip NULL or '(empty string)' names */
+		if (!names[i] || !strlen(names[i]))
+			continue;
 		gpiod = gpio_name_to_desc(names[i]);
 		if (gpiod && (gpiod->gdev == gdev)) {
 			dev_err(&gdev->dev,
