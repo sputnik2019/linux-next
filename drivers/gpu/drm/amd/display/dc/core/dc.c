@@ -895,6 +895,7 @@ static void disable_vbios_mode_if_required(
 		if (stream->link->local_sink &&
 			stream->link->local_sink->sink_signal == SIGNAL_TYPE_EDP) {
 			link = stream->link;
+			break;
 		}
 
 		if (link != NULL && link->link_enc->funcs->is_dig_enabled(link->link_enc)) {
@@ -2622,6 +2623,26 @@ static void commit_planes_for_stream(struct dc *dc,
 				if (srf_updates[i].flip_addr)
 					dc->hwss.update_plane_addr(dc, pipe_ctx);
 			}
+		}
+	}
+
+	if (update_type != UPDATE_TYPE_FAST) {
+		// If changing VTG FP2: wait until back in vactive to program FP2
+		// Need to ensure that pipe unlock happens soon after to minimize race condition
+		for (i = 0; i < dc->res_pool->pipe_count; i++) {
+			struct pipe_ctx *pipe_ctx = &context->res_ctx.pipe_ctx[i];
+
+			if (pipe_ctx->top_pipe || pipe_ctx->stream != stream)
+				continue;
+
+			if (!pipe_ctx->update_flags.bits.global_sync)
+				continue;
+
+			pipe_ctx->stream_res.tg->funcs->wait_for_state(pipe_ctx->stream_res.tg, CRTC_STATE_VBLANK);
+			pipe_ctx->stream_res.tg->funcs->wait_for_state(pipe_ctx->stream_res.tg, CRTC_STATE_VACTIVE);
+
+			pipe_ctx->stream_res.tg->funcs->set_vtg_params(
+					pipe_ctx->stream_res.tg, &pipe_ctx->stream->timing, true);
 		}
 	}
 
