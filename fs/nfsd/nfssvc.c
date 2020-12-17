@@ -28,6 +28,7 @@
 #include "vfs.h"
 #include "netns.h"
 #include "filecache.h"
+#include "xdr4.h"
 
 #include "trace.h"
 
