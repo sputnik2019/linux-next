@@ -347,7 +347,13 @@ static int upgrade_mode(struct dm_dev_internal *dd, fmode_t new_mode,
 dev_t dm_get_dev_t(const char *path)
 {
 	dev_t dev;
+	unsigned int maj, min;
 
+	if (sscanf(path, "%u:%u", &maj, &min) == 2) {
+		dev = MKDEV(maj, min);
+		if (maj == MAJOR(dev) && min == MINOR(dev))
+			return dev;
+	}
 	if (lookup_bdev(path, &dev))
 		dev = name_to_dev_t(path);
 	return dev;
