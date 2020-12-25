@@ -2093,10 +2093,12 @@ static int f2fs_ioc_commit_atomic_write(struct file *filp)
 		goto err_out;
 	}
 
+	down_write(&F2FS_I(inode)->i_mmap_sem);
+
 	if (f2fs_is_atomic_file(inode)) {
 		ret = f2fs_commit_inmem_pages(inode);
 		if (ret)
-			goto err_out;
+			goto up_write;
 
 		ret = f2fs_do_sync_file(filp, 0, LLONG_MAX, 0, true);
 		if (!ret)
@@ -2104,6 +2106,8 @@ static int f2fs_ioc_commit_atomic_write(struct file *filp)
 	} else {
 		ret = f2fs_do_sync_file(filp, 0, LLONG_MAX, 1, false);
 	}
+up_write:
+	up_write(&F2FS_I(inode)->i_mmap_sem);
 err_out:
 	if (is_inode_flag_set(inode, FI_ATOMIC_REVOKE_REQUEST)) {
 		clear_inode_flag(inode, FI_ATOMIC_REVOKE_REQUEST);
