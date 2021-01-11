@@ -26,7 +26,11 @@ obj-$(CONFIG_USB_CDNS3_TI)			+= cdns3-ti.o
 obj-$(CONFIG_USB_CDNS3_IMX)			+= cdns3-imx.o
 
 cdnsp-udc-pci-y					:= cdnsp-pci.o
+ifeq ($(CONFIG_USB),m)
+obj-m						+= cdnsp-udc-pci.o
+else
 obj-$(CONFIG_USB_CDNSP_PCI) 			+= cdnsp-udc-pci.o
+endif
 cdnsp-udc-pci-$(CONFIG_USB_CDNSP_GADGET)	+= cdnsp-ring.o cdnsp-gadget.o \
 						   cdnsp-mem.o cdnsp-ep0.o
 
