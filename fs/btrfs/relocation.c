@@ -2615,7 +2615,7 @@ int setup_extent_mapping(struct inode *inode, u64 start, u64 end,
 /*
  * Allow error injection to test balance cancellation
  */
-int btrfs_should_cancel_balance(struct btrfs_fs_info *fs_info)
+noinline int btrfs_should_cancel_balance(struct btrfs_fs_info *fs_info)
 {
 	return atomic_read(&fs_info->balance_cancel_req) ||
 		fatal_signal_pending(current);
@@ -2975,11 +2975,16 @@ static int delete_v1_space_cache(struct extent_buffer *leaf,
 		return 0;
 
 	for (i = 0; i < btrfs_header_nritems(leaf); i++) {
+		u8 type;
+
 		btrfs_item_key_to_cpu(leaf, &key, i);
 		if (key.type != BTRFS_EXTENT_DATA_KEY)
 			continue;
 		ei = btrfs_item_ptr(leaf, i, struct btrfs_file_extent_item);
-		if (btrfs_file_extent_type(leaf, ei) == BTRFS_FILE_EXTENT_REG &&
+		type = btrfs_file_extent_type(leaf, ei);
+
+		if ((type == BTRFS_FILE_EXTENT_REG ||
+		     type == BTRFS_FILE_EXTENT_PREALLOC) &&
 		    btrfs_file_extent_disk_bytenr(leaf, ei) == data_bytenr) {
 			found = true;
 			space_cache_ino = key.objectid;
@@ -3429,7 +3434,7 @@ struct inode *create_reloc_inode(struct btrfs_fs_info *fs_info,
 		return ERR_CAST(trans);
 	}
 
-	err = btrfs_find_free_objectid(root, &objectid);
+	err = btrfs_get_free_objectid(root, &objectid);
 	if (err)
 		goto out;
 
