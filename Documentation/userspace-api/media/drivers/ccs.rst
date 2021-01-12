@@ -1,4 +1,4 @@
-.. SPDX-License-Identifier: GPL-2.0-only OR BSD-3-Clause
+.. SPDX-License-Identifier: GPL-2.0-only
 
 .. include:: <isonum.txt>
 
@@ -56,40 +56,55 @@ analogue data is never read from the pixel matrix that are outside the
 configured selection rectangle that designates crop. The difference has an
 effect in device timing and likely also in power consumption.
 
-Register definition generator
------------------------------
+Private controls
+----------------
 
-The ccs-regs.asc file contains MIPI CCS register definitions that are used
-to produce C source code files for definitions that can be better used by
-programs written in C language. As there are many dependencies between the
-produced files, please do not modify them manually as it's error-prone and
-in vain, but instead change the script producing them.
+The MIPI CCS driver implements a number of private controls under
+``V4L2_CID_USER_BASE_CCS`` to control the MIPI CCS compliant camera sensors.
 
-Usage
-~~~~~
+Analogue gain model
+~~~~~~~~~~~~~~~~~~~
 
-Conventionally the script is called this way to update the CCS driver
-definitions:
+The CCS defines an analogue gain model where the gain can be calculated using
+the following formula:
 
-.. code-block:: none
+	gain = m0 * x + c0 / (m1 * x + c1)
 
-	$ Documentation/driver-api/media/drivers/ccs/mk-ccs-regs -k \
-		-e drivers/media/i2c/ccs/ccs-regs.h \
-		-L drivers/media/i2c/ccs/ccs-limits.h \
-		-l drivers/media/i2c/ccs/ccs-limits.c \
-		-c Documentation/driver-api/media/drivers/ccs/ccs-regs.asc
+Either m0 or c0 will be zero. The constants that are device specific, can be
+obtained from the following controls:
 
-CCS PLL calculator
-==================
+	V4L2_CID_CCS_ANALOGUE_GAIN_M0
+	V4L2_CID_CCS_ANALOGUE_GAIN_M1
+	V4L2_CID_CCS_ANALOGUE_GAIN_C0
+	V4L2_CID_CCS_ANALOGUE_GAIN_C1
 
-The CCS PLL calculator is used to compute the PLL configuration, given sensor's
-capabilities as well as board configuration and user specified configuration. As
-the configuration space that encompasses all these configurations is vast, the
-PLL calculator isn't entirely trivial. Yet it is relatively simple to use for a
-driver.
+The analogue gain (``x`` in the formula) is controlled through
+``V4L2_CID_ANALOGUE_GAIN`` in this case.
 
-The PLL model implemented by the PLL calculator corresponds to MIPI CCS 1.1.
+Alternate analogue gain model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. kernel-doc:: drivers/media/i2c/ccs-pll.h
+The CCS defines another analogue gain model called alternate analogue gain. In
+this case, the formula to calculate actual gain consists of linear and
+exponential parts:
+
+	gain = linear * 2 ^ exponent
+
+The ``linear`` and ``exponent`` factors can be set using the
+``V4L2_CID_CCS_ANALOGUE_LINEAR_GAIN`` and
+``V4L2_CID_CCS_ANALOGUE_EXPONENTIAL_GAIN`` controls, respectively
+
+Shading correction
+~~~~~~~~~~~~~~~~~~
+
+The CCS standard supports lens shading correction. The feature can be controlled
+using ``V4L2_CID_CCS_SHADING_CORRECTION``. Additionally, the luminance
+correction level may be changed using
+``V4L2_CID_CCS_LUMINANCE_CORRECTION_LEVEL``, where value 0 indicates no
+correction and 128 indicates correcting the luminance in corners to 10 % less
+than in the centre.
+
+Shading correction needs to be enabled for luminance correction level to have an
+effect.
 
 **Copyright** |copy| 2020 Intel Corporation
