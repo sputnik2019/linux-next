@@ -150,6 +150,7 @@ struct page {
 			union {
 				struct mm_struct *pt_mm; /* x86 pgds only */
 				atomic_t pt_frag_refcount; /* powerpc */
+				spinlock_t *parisc_pgd_lock; /* parisc pgds only */
 			};
 #if ALLOC_SPLIT_PTLOCKS
 			spinlock_t *ptl;

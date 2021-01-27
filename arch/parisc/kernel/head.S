@@ -36,6 +36,7 @@ END(boot_args)
 
 	.align	4
 	.import init_thread_union,data
+	.import pa_swapper_pg_lock,data
 	.import fault_vector_20,code    /* IVA parisc 2.0 32 bit */
 #ifndef CONFIG_64BIT
         .import fault_vector_11,code    /* IVA parisc 1.1 32 bit */
@@ -73,6 +74,8 @@ $bss_loop:
 	load32		PA(swapper_pg_dir),%r4
 	mtctl		%r4,%cr24	/* Initialize kernel root pointer */
 	mtctl		%r4,%cr25	/* Initialize user root pointer */
+	load32		PA(pa_swapper_pg_lock), %r1
+	mtctl		%r1,%cr28	/* Initialize pgd lock pointer */
 
 #if CONFIG_PGTABLE_LEVELS == 3
 	/* Set pmd in pgd */
