@@ -175,8 +175,10 @@ const struct fs_parameter_spec smb3_fs_parameters[] = {
 	fsparam_flag_no("exec", Opt_ignore),
 	fsparam_flag_no("dev", Opt_ignore),
 	fsparam_flag_no("mand", Opt_ignore),
+	fsparam_flag_no("auto", Opt_ignore),
 	fsparam_string("cred", Opt_ignore),
 	fsparam_string("credentials", Opt_ignore),
+	fsparam_string("prefixpath", Opt_ignore),
 	{}
 };
 
