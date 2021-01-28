@@ -1,15 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
-/dts-v1/;
 
 #include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/input/gpio-keys.h>
 
-#include "tegra194-p2888.dtsi"
-
 / {
-	model = "NVIDIA Jetson AGX Xavier Developer Kit";
-	compatible = "nvidia,p2972-0000", "nvidia,tegra194";
-
 	bus@0 {
 		aconnect@2900000 {
 			status = "okay";
@@ -23,13 +17,17 @@
 			};
 		};
 
+		ddc: i2c@3190000 {
+			status = "okay";
+		};
+
 		i2c@3160000 {
-			eeprom@56 {
+			eeprom@57 {
 				compatible = "atmel,24c02";
-				reg = <0x56>;
+				reg = <0x57>;
 
 				label = "system";
-				vcc-supply = <&vdd_1v8ls>;
+				vcc-supply = <&vdd_1v8>;
 				address-width = <8>;
 				pagesize = <8>;
 				size = <256>;
@@ -37,17 +35,8 @@
 			};
 		};
 
-		ddc: i2c@31c0000 {
-			status = "okay";
-		};
-
-		/* SDMMC1 (SD/MMC) */
-		mmc@3400000 {
-			status = "okay";
-		};
-
 		hda@3510000 {
-			nvidia,model = "jetson-xavier-hda";
+			nvidia,model = "jetson-xavier-nx-hda";
 			status = "okay";
 		};
 
@@ -57,15 +46,11 @@
 			pads {
 				usb2 {
 					lanes {
-						usb2-0 {
-							status = "okay";
-						};
-
 						usb2-1 {
 							status = "okay";
 						};
 
-						usb2-3 {
+						usb2-2 {
 							status = "okay";
 						};
 					};
@@ -73,15 +58,7 @@
 
 				usb3 {
 					lanes {
-						usb3-0 {
-							status = "okay";
-						};
-
 						usb3-2 {
-							status = "okay";
-						};
-
-						usb3-3 {
 							status = "okay";
 						};
 					};
@@ -89,34 +66,20 @@
 			};
 
 			ports {
-				usb2-0 {
-					mode = "host";
-					status = "okay";
-				};
-
 				usb2-1 {
 					mode = "host";
 					status = "okay";
 				};
 
-				usb2-3 {
+				usb2-2 {
 					mode = "host";
-					status = "okay";
-				};
-
-				usb3-0 {
-					nvidia,usb2-companion = <1>;
+					vbus-supply = <&vdd_5v0_sys>;
 					status = "okay";
 				};
 
 				usb3-2 {
-					nvidia,usb2-companion = <0>;
-					status = "okay";
-				};
-
-				usb3-3 {
-					nvidia,usb2-companion = <3>;
-					maximum-speed = "super-speed";
+					nvidia,usb2-companion = <1>;
+					vbus-supply = <&vdd_5v0_sys>;
 					status = "okay";
 				};
 			};
@@ -125,16 +88,25 @@
 		usb@3610000 {
 			status = "okay";
 
-			phys =	<&{/bus@0/padctl@3520000/pads/usb2/lanes/usb2-0}>,
-				<&{/bus@0/padctl@3520000/pads/usb2/lanes/usb2-1}>,
-				<&{/bus@0/padctl@3520000/pads/usb2/lanes/usb2-3}>,
-				<&{/bus@0/padctl@3520000/pads/usb3/lanes/usb3-0}>,
-				<&{/bus@0/padctl@3520000/pads/usb3/lanes/usb3-2}>,
-				<&{/bus@0/padctl@3520000/pads/usb3/lanes/usb3-3}>;
-			phy-names = "usb2-0", "usb2-1", "usb2-3", "usb3-0", "usb3-2", "usb3-3";
+			phys =	<&{/bus@0/padctl@3520000/pads/usb2/lanes/usb2-1}>,
+				<&{/bus@0/padctl@3520000/pads/usb2/lanes/usb2-2}>,
+				<&{/bus@0/padctl@3520000/pads/usb3/lanes/usb3-2}>;
+			phy-names = "usb2-1", "usb2-2", "usb3-2";
 		};
 
-		pwm@c340000 {
+		spi@3270000 {
+			status = "okay";
+
+			flash@0 {
+				compatible = "spi-nor";
+				reg = <0>;
+				spi-max-frequency = <102000000>;
+				spi-tx-bus-width = <4>;
+				spi-rx-bus-width = <4>;
+			};
+		};
+
+		pwm@32d0000 {
 			status = "okay";
 		};
 
@@ -151,10 +123,6 @@
 				status = "okay";
 			};
 
-			dpaux@155e0000 {
-				status = "okay";
-			};
-
 			/* DP0 */
 			sor@15b00000 {
 				status = "okay";
@@ -165,18 +133,8 @@
 				nvidia,dpaux = <&dpaux0>;
 			};
 
-			/* DP1 */
-			sor@15b40000 {
-				status = "okay";
-
-				avdd-io-hdmi-dp-supply = <&vdd_1v0>;
-				vdd-hdmi-dp-pll-supply = <&vdd_1v8hs>;
-
-				nvidia,dpaux = <&dpaux1>;
-			};
-
 			/* HDMI */
-			sor@15b80000 {
+			sor@15b40000 {
 				status = "okay";
 
 				avdd-io-hdmi-dp-supply = <&vdd_1v0>;
@@ -184,46 +142,25 @@
 				hdmi-supply = <&vdd_hdmi>;
 
 				nvidia,ddc-i2c-bus = <&ddc>;
-				nvidia,hpd-gpio = <&gpio TEGRA194_MAIN_GPIO(M, 2)
+				nvidia,hpd-gpio = <&gpio TEGRA194_MAIN_GPIO(M, 1)
 							 GPIO_ACTIVE_LOW>;
 			};
 		};
 	};
 
-	pcie@14100000 {
+	pcie@14160000 {
 		status = "okay";
 
 		vddio-pex-ctl-supply = <&vdd_1v8ao>;
 
-		phys = <&p2u_hsio_0>;
+		phys = <&p2u_hsio_11>;
 		phy-names = "p2u-0";
-	};
-
-	pcie@14140000 {
-		status = "okay";
-
-		vddio-pex-ctl-supply = <&vdd_1v8ao>;
-
-		phys = <&p2u_hsio_7>;
-		phy-names = "p2u-0";
-	};
-
-	pcie@14180000 {
-		status = "okay";
-
-		vddio-pex-ctl-supply = <&vdd_1v8ao>;
-
-		phys = <&p2u_hsio_2>, <&p2u_hsio_3>, <&p2u_hsio_4>,
-		       <&p2u_hsio_5>;
-		phy-names = "p2u-0", "p2u-1", "p2u-2", "p2u-3";
 	};
 
 	pcie@141a0000 {
 		status = "okay";
 
 		vddio-pex-ctl-supply = <&vdd_1v8ao>;
-		vpcie3v3-supply = <&vdd_3v3_pcie>;
-		vpcie12v-supply = <&vdd_12v_pcie>;
 
 		phys = <&p2u_nvhs_0>, <&p2u_nvhs_1>, <&p2u_nvhs_2>,
 		       <&p2u_nvhs_3>, <&p2u_nvhs_4>, <&p2u_nvhs_5>,
@@ -253,7 +190,7 @@
 
 	fan: fan {
 		compatible = "pwm-fan";
-		pwms = <&pwm4 0 45334>;
+		pwms = <&pwm6 0 45334>;
 
 		cooling-levels = <0 64 128 255>;
 		#cooling-cells = <2>;
@@ -281,6 +218,51 @@
 			wakeup-event-action = <EV_ACT_ASSERTED>;
 			wakeup-source;
 		};
+	};
+
+	vdd_5v0_sys: regulator@100 {
+		compatible = "regulator-fixed";
+		regulator-name = "VDD_5V_SYS";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	vdd_3v3_sys: regulator@101 {
+		compatible = "regulator-fixed";
+		regulator-name = "VDD_3V3_SYS";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	vdd_3v3_ao: regulator@102 {
+		compatible = "regulator-fixed";
+		regulator-name = "VDD_3V3_AO";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	vdd_1v8: regulator@103 {
+		compatible = "regulator-fixed";
+		regulator-name = "VDD_1V8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	vdd_hdmi: regulator@104 {
+		compatible = "regulator-fixed";
+		regulator-name = "VDD_5V0_HDMI_CON";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on;
+		regulator-boot-on;
 	};
 
 	thermal-zones {
