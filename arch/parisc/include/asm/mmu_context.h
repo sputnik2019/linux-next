@@ -5,6 +5,7 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/atomic.h>
+#include <linux/spinlock.h>
 #include <asm-generic/mm_hooks.h>
 
 /* on PA-RISC, we actually have enough contexts to justify an allocator
@@ -50,6 +51,14 @@ static inline void switch_mm_irqs_off(struct mm_struct *prev,
 		struct mm_struct *next, struct task_struct *tsk)
 {
 	if (prev != next) {
+#ifdef CONFIG_SMP
+		/* phys address of tlb lock in cr28 (tr4) for TLB faults */
+		struct page *page;
+
+		page = virt_to_page((unsigned long)next->pgd);
+		/* BUG_ON(!page->parisc_pgd_lock); */
+		mtctl(__pa(__ldcw_align(&page->parisc_pgd_lock->rlock.raw_lock)), 28);
+#endif
 		mtctl(__pa(next->pgd), 25);
 		load_context(next->context);
 	}
