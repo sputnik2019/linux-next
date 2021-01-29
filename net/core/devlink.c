@@ -8617,6 +8617,10 @@ EXPORT_SYMBOL_GPL(devlink_dpipe_table_unregister);
  *	@resource_id: resource's id
  *	@parent_resource_id: resource's parent id
  *	@size_params: size parameters
+ *
+ *	Generic resources should reuse the same names across drivers.
+ *	Please see the generic resources list at:
+ *	Documentation/networking/devlink/devlink-resource.rst
  */
 int devlink_resource_register(struct devlink *devlink,
 			      const char *resource_name,
@@ -9508,6 +9512,7 @@ static const struct devlink_trap devlink_trap_generic[] = {
 	DEVLINK_TRAP(GTP_PARSING, DROP),
 	DEVLINK_TRAP(ESP_PARSING, DROP),
 	DEVLINK_TRAP(BLACKHOLE_NEXTHOP, DROP),
+	DEVLINK_TRAP(DMAC_FILTER, DROP),
 };
 
 #define DEVLINK_TRAP_GROUP(_id)						      \

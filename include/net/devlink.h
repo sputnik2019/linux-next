@@ -380,6 +380,8 @@ struct devlink_resource {
 
 #define DEVLINK_RESOURCE_ID_PARENT_TOP 0
 
+#define DEVLINK_RESOURCE_GENERIC_NAME_PORTS "physical_ports"
+
 #define __DEVLINK_PARAM_MAX_STRING_VALUE 32
 enum devlink_param_type {
 	DEVLINK_PARAM_TYPE_U8,
@@ -836,6 +838,7 @@ enum devlink_trap_generic_id {
 	DEVLINK_TRAP_GENERIC_ID_GTP_PARSING,
 	DEVLINK_TRAP_GENERIC_ID_ESP_PARSING,
 	DEVLINK_TRAP_GENERIC_ID_BLACKHOLE_NEXTHOP,
+	DEVLINK_TRAP_GENERIC_ID_DMAC_FILTER,
 
 	/* Add new generic trap IDs above */
 	__DEVLINK_TRAP_GENERIC_ID_MAX,
@@ -1061,6 +1064,8 @@ enum devlink_trap_group_generic_id {
 	"esp_parsing"
 #define DEVLINK_TRAP_GENERIC_NAME_BLACKHOLE_NEXTHOP \
 	"blackhole_nexthop"
+#define DEVLINK_TRAP_GENERIC_NAME_DMAC_FILTER \
+	"dest_mac_filter"
 
 #define DEVLINK_TRAP_GROUP_GENERIC_NAME_L2_DROPS \
 	"l2_drops"
