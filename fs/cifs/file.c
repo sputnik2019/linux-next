@@ -4261,8 +4261,7 @@ readpages_fill_pages(struct TCP_Server_Info *server,
 			result = n;
 #endif
 		else
-			result = cifs_read_page_from_socket(
-					server, page, page_offset, n);
+			result = cifs_read_iter_from_socket(server, &rdata->iter, n);
 		if (result < 0)
 			break;
 
@@ -4286,6 +4285,13 @@ cifs_readpages_copy_into_pages(struct TCP_Server_Info *server,
 			       struct iov_iter *iter)
 {
 	return readpages_fill_pages(server, rdata, iter, iter->count);
+}
+
+static bool cifs_is_cache_enabled(struct inode *inode)
+{
+	struct fscache_cookie *cookie = cifs_inode_cookie(inode);
+
+	return fscache_cookie_enabled(cookie) && !hlist_empty(&cookie->backing_objects);
 }
 
 static int

@@ -567,7 +567,7 @@ wait_for_free_credits(struct TCP_Server_Info *server, const int num_credits,
 					server->hostname, num_credits, 0);
 				cifs_server_dbg(VFS, "wait timed out after %d ms\n",
 					 timeout);
-				return -ENOTSUPP;
+				return -EBUSY;
 			}
 			if (rc == -ERESTARTSYS)
 				return -ERESTARTSYS;
@@ -609,7 +609,7 @@ wait_for_free_credits(struct TCP_Server_Info *server, const int num_credits,
 						0);
 					cifs_server_dbg(VFS, "wait timed out after %d ms\n",
 						 timeout);
-					return -ENOTSUPP;
+					return -EBUSY;
 				}
 				if (rc == -ERESTARTSYS)
 					return -ERESTARTSYS;
@@ -666,16 +666,28 @@ wait_for_compound_request(struct TCP_Server_Info *server, int num,
 
 	if (*credits < num) {
 		/*
-		 * Return immediately if not too many requests in flight since
-		 * we will likely be stuck on waiting for credits.
+		 * If the server is tight on resources or just gives us less
+		 * credits for other reasons (e.g. requests are coming out of
+		 * order and the server delays granting more credits until it
+		 * processes a missing mid) and we exhausted most available
+		 * credits there may be situations when we try to send
+		 * a compound request but we don't have enough credits. At this
+		 * point the client needs to decide if it should wait for
+		 * additional credits or fail the request. If at least one
+		 * request is in flight there is a high probability that the
+		 * server will return enough credits to satisfy this compound
+		 * request.
+		 *
+		 * Return immediately if no requests in flight since we will be
+		 * stuck on waiting for credits.
 		 */
-		if (server->in_flight < num - *credits) {
+		if (server->in_flight == 0) {
 			spin_unlock(&server->req_lock);
 			trace_smb3_insufficient_credits(server->CurrentMid,
 					server->hostname, scredits, sin_flight);
 			cifs_dbg(FYI, "%s: %d requests in flight, needed %d total=%d\n",
 					__func__, sin_flight, num, scredits);
-			return -ENOTSUPP;
+			return -EDEADLK;
 		}
 	}
 	spin_unlock(&server->req_lock);
@@ -1159,7 +1171,7 @@ compound_send_recv(const unsigned int xid, struct cifs_ses *ses,
 	/*
 	 * Compounding is never used during session establish.
 	 */
-	if ((ses->status == CifsNew) || (optype & CIFS_NEG_OP))
+	if ((ses->status == CifsNew) || (optype & CIFS_NEG_OP) || (optype & CIFS_SESS_OP))
 		smb311_update_preauth_hash(ses, rqst[0].rq_iov,
 					   rqst[0].rq_nvec);
 
@@ -1224,7 +1236,7 @@ compound_send_recv(const unsigned int xid, struct cifs_ses *ses,
 	/*
 	 * Compounding is never used during session establish.
 	 */
-	if ((ses->status == CifsNew) || (optype & CIFS_NEG_OP)) {
+	if ((ses->status == CifsNew) || (optype & CIFS_NEG_OP) || (optype & CIFS_SESS_OP)) {
 		struct kvec iov = {
 			.iov_base = resp_iov[0].iov_base,
 			.iov_len = resp_iov[0].iov_len
