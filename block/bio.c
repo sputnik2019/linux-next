@@ -25,22 +25,34 @@
 #include "blk.h"
 #include "blk-rq-qos.h"
 
-/*
- * Test patch to inline a certain number of bi_io_vec's inside the bio
- * itself, to shrink a bio data allocation from two mempool calls to one
- */
-#define BIO_INLINE_VECS		4
-
-/*
- * if you change this list, also change bvec_alloc or things will
- * break badly! cannot be bigger than what you can fit into an
- * unsigned short
- */
-#define BV(x, n) { .nr_vecs = x, .name = "biovec-"#n }
-static struct biovec_slab bvec_slabs[BVEC_POOL_NR] __read_mostly = {
-	BV(1, 1), BV(4, 4), BV(16, 16), BV(64, 64), BV(128, 128), BV(BIO_MAX_PAGES, max),
+static struct biovec_slab {
+	int nr_vecs;
+	char *name;
+	struct kmem_cache *slab;
+} bvec_slabs[] __read_mostly = {
+	{ .nr_vecs = 16, .name = "biovec-16" },
+	{ .nr_vecs = 64, .name = "biovec-64" },
+	{ .nr_vecs = 128, .name = "biovec-128" },
+	{ .nr_vecs = BIO_MAX_PAGES, .name = "biovec-max" },
 };
-#undef BV
+
+static struct biovec_slab *biovec_slab(unsigned short nr_vecs)
+{
+	switch (nr_vecs) {
+	/* smaller bios use inline vecs */
+	case 5 ... 16:
+		return &bvec_slabs[0];
+	case 17 ... 64:
+		return &bvec_slabs[1];
+	case 65 ... 128:
+		return &bvec_slabs[2];
+	case 129 ... BIO_MAX_PAGES:
+		return &bvec_slabs[3];
+	default:
+		BUG();
+		return NULL;
+	}
+}
 
 /*
  * fs_bio_set is the bio_set containing bio and iovec memory pools used by
@@ -137,90 +149,55 @@ out:
 	mutex_unlock(&bio_slab_lock);
 }
 
-unsigned int bvec_nr_vecs(unsigned short idx)
+void bvec_free(mempool_t *pool, struct bio_vec *bv, unsigned short nr_vecs)
 {
-	return bvec_slabs[--idx].nr_vecs;
-}
+	BIO_BUG_ON(nr_vecs > BIO_MAX_PAGES);
 
-void bvec_free(mempool_t *pool, struct bio_vec *bv, unsigned int idx)
-{
-	if (!idx)
-		return;
-	idx--;
-
-	BIO_BUG_ON(idx >= BVEC_POOL_NR);
-
-	if (idx == BVEC_POOL_MAX) {
+	if (nr_vecs == BIO_MAX_PAGES)
 		mempool_free(bv, pool);
-	} else {
-		struct biovec_slab *bvs = bvec_slabs + idx;
-
-		kmem_cache_free(bvs->slab, bv);
-	}
+	else if (nr_vecs > BIO_INLINE_VECS)
+		kmem_cache_free(biovec_slab(nr_vecs)->slab, bv);
 }
 
-struct bio_vec *bvec_alloc(gfp_t gfp_mask, int nr, unsigned long *idx,
-			   mempool_t *pool)
+/*
+ * Make the first allocation restricted and don't dump info on allocation
+ * failures, since we'll fall back to the mempool in case of failure.
+ */
+static inline gfp_t bvec_alloc_gfp(gfp_t gfp)
 {
-	struct bio_vec *bvl;
+	return (gfp & ~(__GFP_DIRECT_RECLAIM | __GFP_IO)) |
+		__GFP_NOMEMALLOC | __GFP_NORETRY | __GFP_NOWARN;
+}
 
-	/*
-	 * see comment near bvec_array define!
-	 */
-	switch (nr) {
-	case 1:
-		*idx = 0;
-		break;
-	case 2 ... 4:
-		*idx = 1;
-		break;
-	case 5 ... 16:
-		*idx = 2;
-		break;
-	case 17 ... 64:
-		*idx = 3;
-		break;
-	case 65 ... 128:
-		*idx = 4;
-		break;
-	case 129 ... BIO_MAX_PAGES:
-		*idx = 5;
-		break;
-	default:
+struct bio_vec *bvec_alloc(mempool_t *pool, unsigned short *nr_vecs,
+		gfp_t gfp_mask)
+{
+	struct biovec_slab *bvs = biovec_slab(*nr_vecs);
+
+	if (WARN_ON_ONCE(!bvs))
 		return NULL;
-	}
 
 	/*
-	 * idx now points to the pool we want to allocate from. only the
-	 * 1-vec entry pool is mempool backed.
+	 * Upgrade the nr_vecs request to take full advantage of the allocation.
+	 * We also rely on this in the bvec_free path.
 	 */
-	if (*idx == BVEC_POOL_MAX) {
-fallback:
-		bvl = mempool_alloc(pool, gfp_mask);
-	} else {
-		struct biovec_slab *bvs = bvec_slabs + *idx;
-		gfp_t __gfp_mask = gfp_mask & ~(__GFP_DIRECT_RECLAIM | __GFP_IO);
+	*nr_vecs = bvs->nr_vecs;
 
-		/*
-		 * Make this allocation restricted and don't dump info on
-		 * allocation failures, since we'll fallback to the mempool
-		 * in case of failure.
-		 */
-		__gfp_mask |= __GFP_NOMEMALLOC | __GFP_NORETRY | __GFP_NOWARN;
+	/*
+	 * Try a slab allocation first for all smaller allocations.  If that
+	 * fails and __GFP_DIRECT_RECLAIM is set retry with the mempool.
+	 * The mempool is sized to handle up to BIO_MAX_PAGES entries.
+	 */
+	if (*nr_vecs < BIO_MAX_PAGES) {
+		struct bio_vec *bvl;
 
-		/*
-		 * Try a slab allocation. If this fails and __GFP_DIRECT_RECLAIM
-		 * is set, retry with the 1-entry mempool
-		 */
-		bvl = kmem_cache_alloc(bvs->slab, __gfp_mask);
-		if (unlikely(!bvl && (gfp_mask & __GFP_DIRECT_RECLAIM))) {
-			*idx = BVEC_POOL_MAX;
-			goto fallback;
-		}
+		bvl = kmem_cache_alloc(bvs->slab, bvec_alloc_gfp(gfp_mask));
+		if (likely(bvl) || !(gfp_mask & __GFP_DIRECT_RECLAIM))
+			return bvl;
+		*nr_vecs = BIO_MAX_PAGES;
 	}
 
-	(*idx)++;
-	return bvl;
+	return mempool_alloc(pool, gfp_mask);
 }
 
 void bio_uninit(struct bio *bio)
@@ -246,7 +223,7 @@ static void bio_free(struct bio *bio)
 	bio_uninit(bio);
 
 	if (bs) {
-		bvec_free(&bs->bvec_pool, bio->bi_io_vec, BVEC_POOL_IDX(bio));
+		bvec_free(&bs->bvec_pool, bio->bi_io_vec, bio->bi_max_vecs);
 
 		/*
 		 * If we have front padding, adjust the bio pointer before freeing
@@ -290,12 +267,8 @@ EXPORT_SYMBOL(bio_init);
  */
 void bio_reset(struct bio *bio)
 {
-	unsigned long flags = bio->bi_flags & (~0UL << BIO_RESET_BITS);
-
 	bio_uninit(bio);
-
 	memset(bio, 0, BIO_RESET_BYTES);
-	bio->bi_flags = flags;
 	atomic_set(&bio->__bi_remaining, 1);
 }
 EXPORT_SYMBOL(bio_reset);
@@ -422,7 +395,7 @@ static void punt_bios_to_rescuer(struct bio_set *bs)
  *
  * Returns: Pointer to new bio on success, NULL on failure.
  */
-struct bio *bio_alloc_bioset(gfp_t gfp_mask, unsigned int nr_iovecs,
+struct bio *bio_alloc_bioset(gfp_t gfp_mask, unsigned short nr_iovecs,
 			     struct bio_set *bs)
 {
 	gfp_t saved_gfp = gfp_mask;
@@ -468,22 +441,18 @@ struct bio *bio_alloc_bioset(gfp_t gfp_mask, unsigned int nr_iovecs,
 
 	bio = p + bs->front_pad;
 	if (nr_iovecs > BIO_INLINE_VECS) {
-		unsigned long idx = 0;
 		struct bio_vec *bvl = NULL;
 
-		bvl = bvec_alloc(gfp_mask, nr_iovecs, &idx, &bs->bvec_pool);
+		bvl = bvec_alloc(&bs->bvec_pool, &nr_iovecs, gfp_mask);
 		if (!bvl && gfp_mask != saved_gfp) {
 			punt_bios_to_rescuer(bs);
 			gfp_mask = saved_gfp;
-			bvl = bvec_alloc(gfp_mask, nr_iovecs, &idx,
-					 &bs->bvec_pool);
+			bvl = bvec_alloc(&bs->bvec_pool, &nr_iovecs, gfp_mask);
 		}
-
 		if (unlikely(!bvl))
 			goto err_free;
 
-		bio_init(bio, bvl, bvec_nr_vecs(idx));
-		bio->bi_flags |= idx << BVEC_POOL_OFFSET;
+		bio_init(bio, bvl, nr_iovecs);
 	} else if (nr_iovecs) {
 		bio_init(bio, bio->bi_inline_vecs, BIO_INLINE_VECS);
 	} else {
@@ -508,7 +477,7 @@ EXPORT_SYMBOL(bio_alloc_bioset);
  *
  * Returns: Pointer to new bio on success, NULL on failure.
  */
-struct bio *bio_kmalloc(gfp_t gfp_mask, unsigned int nr_iovecs)
+struct bio *bio_kmalloc(gfp_t gfp_mask, unsigned short nr_iovecs)
 {
 	struct bio *bio;
 
@@ -659,7 +628,7 @@ EXPORT_SYMBOL(bio_put);
  */
 void __bio_clone_fast(struct bio *bio, struct bio *bio_src)
 {
-	BUG_ON(bio->bi_pool && BVEC_POOL_IDX(bio));
+	WARN_ON_ONCE(bio->bi_pool && bio->bi_max_vecs);
 
 	/*
 	 * most users will be overriding ->bi_bdev with a new target,
@@ -949,13 +918,14 @@ EXPORT_SYMBOL_GPL(bio_release_pages);
 
 static int bio_iov_bvec_set(struct bio *bio, struct iov_iter *iter)
 {
-	WARN_ON_ONCE(BVEC_POOL_IDX(bio) != 0);
+	WARN_ON_ONCE(bio->bi_max_vecs);
 
 	bio->bi_vcnt = iter->nr_segs;
-	bio->bi_max_vecs = iter->nr_segs;
 	bio->bi_io_vec = (struct bio_vec *)iter->bvec;
 	bio->bi_iter.bi_bvec_done = iter->iov_offset;
 	bio->bi_iter.bi_size = iter->count;
+	bio_set_flag(bio, BIO_NO_PAGE_REF);
+	bio_set_flag(bio, BIO_CLONED);
 
 	iov_iter_advance(iter, iter->count);
 	return 0;
@@ -1093,17 +1063,15 @@ int bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter)
 	if (iov_iter_is_bvec(iter)) {
 		if (WARN_ON_ONCE(bio_op(bio) == REQ_OP_ZONE_APPEND))
 			return -EINVAL;
-		bio_iov_bvec_set(bio, iter);
-		bio_set_flag(bio, BIO_NO_PAGE_REF);
-		return 0;
-	} else {
-		do {
-			if (bio_op(bio) == REQ_OP_ZONE_APPEND)
-				ret = __bio_iov_append_get_pages(bio, iter);
-			else
-				ret = __bio_iov_iter_get_pages(bio, iter);
-		} while (!ret && iov_iter_count(iter) && !bio_full(bio, 0));
+		return bio_iov_bvec_set(bio, iter);
 	}
+
+	do {
+		if (bio_op(bio) == REQ_OP_ZONE_APPEND)
+			ret = __bio_iov_append_get_pages(bio, iter);
+		else
+			ret = __bio_iov_iter_get_pages(bio, iter);
+	} while (!ret && iov_iter_count(iter) && !bio_full(bio, 0));
 
 	/* don't account direct I/O as memory stall */
 	bio_clear_flag(bio, BIO_WORKINGSET);
@@ -1511,7 +1479,7 @@ EXPORT_SYMBOL_GPL(bio_trim);
  */
 int biovec_init_pool(mempool_t *pool, int pool_entries)
 {
-	struct biovec_slab *bp = bvec_slabs + BVEC_POOL_MAX;
+	struct biovec_slab *bp = bvec_slabs + ARRAY_SIZE(bvec_slabs) - 1;
 
 	return mempool_init_slab_pool(pool, pool_entries, bp->slab);
 }
@@ -1617,31 +1585,19 @@ int bioset_init_from_src(struct bio_set *bs, struct bio_set *src)
 }
 EXPORT_SYMBOL(bioset_init_from_src);
 
-static void __init biovec_init_slabs(void)
+static int __init init_bio(void)
 {
 	int i;
 
-	for (i = 0; i < BVEC_POOL_NR; i++) {
-		int size;
+	bio_integrity_init();
+
+	for (i = 0; i < ARRAY_SIZE(bvec_slabs); i++) {
 		struct biovec_slab *bvs = bvec_slabs + i;
 
-		if (bvs->nr_vecs <= BIO_INLINE_VECS) {
-			bvs->slab = NULL;
-			continue;
-		}
-
-		size = bvs->nr_vecs * sizeof(struct bio_vec);
-		bvs->slab = kmem_cache_create(bvs->name, size, 0,
-                                SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+		bvs->slab = kmem_cache_create(bvs->name,
+				bvs->nr_vecs * sizeof(struct bio_vec), 0,
+				SLAB_HWCACHE_ALIGN | SLAB_PANIC, NULL);
 	}
-}
-
-static int __init init_bio(void)
-{
-	BUILD_BUG_ON(BIO_FLAG_LAST > BVEC_POOL_OFFSET);
-
-	bio_integrity_init();
-	biovec_init_slabs();
 
 	if (bioset_init(&fs_bio_set, BIO_POOL_SIZE, 0, BIOSET_NEED_BVECS))
 		panic("bio: can't allocate bios\n");
