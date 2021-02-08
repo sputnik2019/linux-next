@@ -575,6 +575,22 @@ cifs_read_page_from_socket(struct TCP_Server_Info *server, struct page *page,
 	return cifs_readv_from_socket(server, &smb_msg);
 }
 
+int
+cifs_read_iter_from_socket(struct TCP_Server_Info *server, struct iov_iter *iter,
+			   unsigned int to_read)
+{
+	struct msghdr smb_msg;
+	int ret;
+
+	smb_msg.msg_iter = *iter;
+	if (smb_msg.msg_iter.count > to_read)
+		smb_msg.msg_iter.count = to_read;
+	ret = cifs_readv_from_socket(server, &smb_msg);
+	if (ret > 0)
+		iov_iter_advance(iter, ret);
+	return ret;
+}
+
 static bool
 is_smb_response(struct TCP_Server_Info *server, unsigned char type)
 {
@@ -2983,6 +2999,14 @@ expand_dfs_referral(const unsigned int xid, struct cifs_ses *ses,
 			rc = PTR_ERR(mdata);
 			mdata = NULL;
 		} else {
+			/*
+			 * We can not clear out the whole structure since we
+			 * no longer have an explicit function to parse
+			 * a mount-string. Instead we need to clear out the
+			 * individual fields that are no longer valid.
+			 */
+			kfree(ctx->prepath);
+			ctx->prepath = NULL;
 			rc = cifs_setup_volume_info(ctx, mdata, fake_devname);
 		}
 		kfree(fake_devname);
