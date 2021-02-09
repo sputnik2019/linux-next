@@ -47,7 +47,7 @@ static long long squashfs_inode_lookup(struct super_block *sb, int ino_num)
 
 	TRACE("Entered squashfs_inode_lookup, inode_number = %d\n", ino_num);
 
-	if(ino_num == 0 || (ino_num - 1) >= msblk->inodes)
+	if (ino_num == 0 || (ino_num - 1) >= msblk->inodes)
 		return -EINVAL;
 
 	start = le64_to_cpu(msblk->inode_lookup_table[blk]);
