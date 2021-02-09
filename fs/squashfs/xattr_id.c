@@ -109,7 +109,7 @@ __le64 *squashfs_read_xattr_id_table(struct super_block *sb, u64 table_start,
 		start = le64_to_cpu(table[n]);
 		end = le64_to_cpu(table[n + 1]);
 
-		if(start >= end || (end - start) > SQUASHFS_METADATA_SIZE) {
+		if (start >= end || (end - start) > SQUASHFS_METADATA_SIZE) {
 			kfree(table);
 			return ERR_PTR(-EINVAL);
 		}
