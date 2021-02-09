@@ -670,6 +670,82 @@ struct kvm_cpuid2 *kvm_get_supported_cpuid(void)
 }
 
 /*
+ * KVM Get MSR
+ *
+ * Input Args:
+ *   msr_index - Index of MSR
+ *
+ * Output Args: None
+ *
+ * Return: On success, value of the MSR. On failure a TEST_ASSERT is produced.
+ *
+ * Get value of MSR for VCPU.
+ */
+uint64_t kvm_get_feature_msr(uint64_t msr_index)
+{
+	struct {
+		struct kvm_msrs header;
+		struct kvm_msr_entry entry;
+	} buffer = {};
+	int r, kvm_fd;
+
+	buffer.header.nmsrs = 1;
+	buffer.entry.index = msr_index;
+	kvm_fd = open(KVM_DEV_PATH, O_RDONLY);
+	if (kvm_fd < 0)
+		exit(KSFT_SKIP);
+
+	r = ioctl(kvm_fd, KVM_GET_MSRS, &buffer.header);
+	TEST_ASSERT(r == 1, "KVM_GET_MSRS IOCTL failed,\n"
+		"  rc: %i errno: %i", r, errno);
+
+	close(kvm_fd);
+	return buffer.entry.data;
+}
+
+/*
+ * VM VCPU CPUID Set
+ *
+ * Input Args:
+ *   vm - Virtual Machine
+ *   vcpuid - VCPU id
+ *
+ * Output Args: None
+ *
+ * Return: KVM CPUID (KVM_GET_CPUID2)
+ *
+ * Set the VCPU's CPUID.
+ */
+struct kvm_cpuid2 *vcpu_get_cpuid(struct kvm_vm *vm, uint32_t vcpuid)
+{
+	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
+	struct kvm_cpuid2 *cpuid;
+	int rc, max_ent;
+
+	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
+
+	cpuid = allocate_kvm_cpuid2();
+	max_ent = cpuid->nent;
+
+	for (cpuid->nent = 1; cpuid->nent <= max_ent; cpuid->nent++) {
+		rc = ioctl(vcpu->fd, KVM_GET_CPUID2, cpuid);
+		if (!rc)
+			break;
+
+		TEST_ASSERT(rc == -1 && errno == E2BIG,
+			    "KVM_GET_CPUID2 should either succeed or give E2BIG: %d %d",
+			    rc, errno);
+	}
+
+	TEST_ASSERT(rc == 0, "KVM_GET_CPUID2 failed, rc: %i errno: %i",
+		    rc, errno);
+
+	return cpuid;
+}
+
+
+
+/*
  * Locate a cpuid entry.
  *
  * Input Args:
