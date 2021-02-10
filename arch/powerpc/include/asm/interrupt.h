@@ -172,6 +172,8 @@ static inline void interrupt_nmi_exit_prepare(struct pt_regs *regs, struct inter
 #define DECLARE_INTERRUPT_HANDLER_RAW(func)				\
 	__visible long func(struct pt_regs *regs)
 
+#define ppc_noinstr         noinline notrace __no_kcsan __no_sanitize_address
+
 /**
  * DEFINE_INTERRUPT_HANDLER_RAW - Define raw interrupt handler function
  * @func:	Function name of the entry point
@@ -198,7 +200,7 @@ static inline void interrupt_nmi_exit_prepare(struct pt_regs *regs, struct inter
 #define DEFINE_INTERRUPT_HANDLER_RAW(func)				\
 static __always_inline long ____##func(struct pt_regs *regs);		\
 									\
-__visible noinstr long func(struct pt_regs *regs)			\
+__visible ppc_noinstr long func(struct pt_regs *regs)			\
 {									\
 	long ret;							\
 									\
@@ -228,7 +230,7 @@ static __always_inline long ____##func(struct pt_regs *regs)
 #define DEFINE_INTERRUPT_HANDLER(func)					\
 static __always_inline void ____##func(struct pt_regs *regs);		\
 									\
-__visible noinstr void func(struct pt_regs *regs)			\
+__visible ppc_noinstr void func(struct pt_regs *regs)			\
 {									\
 	struct interrupt_state state;					\
 									\
@@ -262,7 +264,7 @@ static __always_inline void ____##func(struct pt_regs *regs)
 #define DEFINE_INTERRUPT_HANDLER_RET(func)				\
 static __always_inline long ____##func(struct pt_regs *regs);		\
 									\
-__visible noinstr long func(struct pt_regs *regs)			\
+__visible ppc_noinstr long func(struct pt_regs *regs)			\
 {									\
 	struct interrupt_state state;					\
 	long ret;							\
@@ -297,7 +299,7 @@ static __always_inline long ____##func(struct pt_regs *regs)
 #define DEFINE_INTERRUPT_HANDLER_ASYNC(func)				\
 static __always_inline void ____##func(struct pt_regs *regs);		\
 									\
-__visible noinstr void func(struct pt_regs *regs)			\
+__visible ppc_noinstr void func(struct pt_regs *regs)			\
 {									\
 	struct interrupt_state state;					\
 									\
@@ -331,7 +333,7 @@ static __always_inline void ____##func(struct pt_regs *regs)
 #define DEFINE_INTERRUPT_HANDLER_NMI(func)				\
 static __always_inline long ____##func(struct pt_regs *regs);		\
 									\
-__visible noinstr long func(struct pt_regs *regs)			\
+__visible ppc_noinstr long func(struct pt_regs *regs)			\
 {									\
 	struct interrupt_nmi_state state;				\
 	long ret;							\
