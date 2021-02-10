@@ -591,7 +591,7 @@ extern int __lock_page_async(struct page *page, struct wait_page_queue *wait);
 extern int __lock_page_or_retry(struct page *page, struct mm_struct *mm,
 				unsigned int flags);
 extern void unlock_page(struct page *page);
-extern void unlock_page_fscache(struct page *page);
+extern void unlock_page_private_2(struct page *page);
 
 /*
  * Return true if the page was successfully locked
@@ -683,16 +683,17 @@ static inline int wait_on_page_locked_killable(struct page *page)
 }
 
 /**
- * wait_on_page_fscache - Wait for PG_fscache to be cleared on a page
+ * wait_on_page_private_2 - Wait for PG_private_2 to be cleared on a page
  * @page: The page
  *
- * Wait for the fscache mark to be removed from a page, usually signifying the
- * completion of a write from that page to the cache.
+ * Wait for the PG_private_2 page bit to be removed from a page.  This is, for
+ * example, used to handle a netfs page being written to a local disk cache,
+ * thereby allowing writes to the cache for the same page to be serialised.
  */
-static inline void wait_on_page_fscache(struct page *page)
+static inline void wait_on_page_private_2(struct page *page)
 {
 	if (PagePrivate2(page))
-		wait_on_page_bit(compound_head(page), PG_fscache);
+		wait_on_page_bit(compound_head(page), PG_private_2);
 }
 
 extern void put_and_wait_on_page_locked(struct page *page);

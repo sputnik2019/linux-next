@@ -24,6 +24,8 @@
 #define ClearPageFsCache(page)		ClearPagePrivate2((page))
 #define TestSetPageFsCache(page)	TestSetPagePrivate2((page))
 #define TestClearPageFsCache(page)	TestClearPagePrivate2((page))
+#define wait_on_page_fscache(page)	wait_on_page_private_2((page))
+#define unlock_page_fscache(page)	unlock_page_private_2((page))
 
 enum netfs_read_source {
 	NETFS_FILL_WITH_ZEROES,
