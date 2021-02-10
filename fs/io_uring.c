@@ -2799,7 +2799,7 @@ static void io_complete_rw_common(struct kiocb *kiocb, long res,
 static bool io_resubmit_prep(struct io_kiocb *req)
 {
 	struct iovec inline_vecs[UIO_FASTIOV], *iovec = inline_vecs;
-	int rw, ret = -ECANCELED;
+	int rw, ret;
 	struct iov_iter iter;
 
 	/* already prepared */
@@ -9050,11 +9050,16 @@ static void io_uring_cancel_files(struct io_ring_ctx *ctx,
 			break;
 
 		io_uring_try_cancel_requests(ctx, task, files);
+
+		if (ctx->sq_data)
+			io_sq_thread_unpark(ctx->sq_data);
 		prepare_to_wait(&task->io_uring->wait, &wait,
 				TASK_UNINTERRUPTIBLE);
 		if (inflight == io_uring_count_inflight(ctx, task, files))
 			schedule();
 		finish_wait(&task->io_uring->wait, &wait);
+		if (ctx->sq_data)
+			io_sq_thread_park(ctx->sq_data);
 	}
 }
 
