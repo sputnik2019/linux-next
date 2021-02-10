@@ -223,7 +223,7 @@ static void netfs_rreq_completed(struct netfs_read_request *rreq)
 
 /*
  * Deal with the completion of writing the data to the cache.  We have to clear
- * the PG_fscache bits on the pages involved and release the caller's ref.
+ * the PG_private_2 bits on the pages involved and release the caller's ref.
  *
  * May be called in softirq mode and we inherit a ref from the caller.
  */
@@ -246,7 +246,7 @@ static void netfs_rreq_unmark_after_write(struct netfs_read_request *rreq)
 			if (have_unlocked && page->index <= unlocked)
 				continue;
 			unlocked = page->index;
-			unlock_page_fscache(page);
+			unlock_page_private_2(page);
 			have_unlocked = true;
 		}
 	}
@@ -357,7 +357,7 @@ static void netfs_rreq_write_to_cache(struct netfs_read_request *rreq)
 }
 
 /*
- * Unlock the pages in a read operation.  We need to set PG_fscache on any
+ * Unlock the pages in a read operation.  We need to set PG_private_2 on any
  * pages we're going to write back before we unlock them.
  */
 static void netfs_rreq_unlock(struct netfs_read_request *rreq)
@@ -404,7 +404,7 @@ static void netfs_rreq_unlock(struct netfs_read_request *rreq)
 				break;
 			}
 			if (test_bit(NETFS_SREQ_WRITE_TO_CACHE, &subreq->flags))
-				SetPageFsCache(page);
+				SetPagePrivate2(page);
 			pg_failed |= subreq_failed;
 			if (pgend < iopos + subreq->len)
 				break;
@@ -1142,7 +1142,7 @@ retry:
 		goto error;
 
 have_page:
-	wait_on_page_fscache(page);
+	wait_on_page_private_2(page);
 have_page_no_wait:
 	if (netfs_priv)
 		ops->cleanup(netfs_priv, mapping);
