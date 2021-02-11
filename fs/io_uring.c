@@ -1029,8 +1029,7 @@ static struct fixed_rsrc_ref_node *alloc_fixed_rsrc_ref_node(
 static void init_fixed_file_ref_node(struct io_ring_ctx *ctx,
 				     struct fixed_rsrc_ref_node *ref_node);
 
-static void __io_complete_rw(struct io_kiocb *req, long res, long res2,
-			     unsigned int issue_flags);
+static bool io_rw_reissue(struct io_kiocb *req);
 static void io_cqring_fill_event(struct io_kiocb *req, long res);
 static void io_put_req(struct io_kiocb *req);
 static void io_put_req_deferred(struct io_kiocb *req, int nr);
@@ -2400,10 +2399,8 @@ static inline void io_init_req_batch(struct req_batch *rb)
 static void io_req_free_batch_finish(struct io_ring_ctx *ctx,
 				     struct req_batch *rb)
 {
-	if (rb->task) {
+	if (rb->task)
 		io_put_task(rb->task, rb->task_refs);
-		rb->task = NULL;
-	}
 	if (rb->ctx_refs)
 		percpu_ref_put_many(&ctx->refs, rb->ctx_refs);
 }
@@ -2563,17 +2560,6 @@ static inline bool io_run_task_work(void)
 	return false;
 }
 
-static void io_iopoll_queue(struct list_head *again)
-{
-	struct io_kiocb *req;
-
-	do {
-		req = list_first_entry(again, struct io_kiocb, inflight_entry);
-		list_del(&req->inflight_entry);
-		__io_complete_rw(req, -EAGAIN, 0, 0);
-	} while (!list_empty(again));
-}
-
 /*
  * Find and free completed poll iocbs
  */
@@ -2582,7 +2568,6 @@ static void io_iopoll_complete(struct io_ring_ctx *ctx, unsigned int *nr_events,
 {
 	struct req_batch rb;
 	struct io_kiocb *req;
-	LIST_HEAD(again);
 
 	/* order with ->result store in io_complete_rw_iopoll() */
 	smp_rmb();
@@ -2592,13 +2577,13 @@ static void io_iopoll_complete(struct io_ring_ctx *ctx, unsigned int *nr_events,
 		int cflags = 0;
 
 		req = list_first_entry(done, struct io_kiocb, inflight_entry);
-		if (READ_ONCE(req->result) == -EAGAIN) {
-			req->result = 0;
-			req->iopoll_completed = 0;
-			list_move_tail(&req->inflight_entry, &again);
-			continue;
-		}
 		list_del(&req->inflight_entry);
+
+		if (READ_ONCE(req->result) == -EAGAIN) {
+			req->iopoll_completed = 0;
+			if (io_rw_reissue(req))
+				continue;
+		}
 
 		if (req->flags & REQ_F_BUFFER_SELECTED)
 			cflags = io_put_rw_kbuf(req);
@@ -2613,9 +2598,6 @@ static void io_iopoll_complete(struct io_ring_ctx *ctx, unsigned int *nr_events,
 	io_commit_cqring(ctx);
 	io_cqring_ev_posted_iopoll(ctx);
 	io_req_free_batch_finish(ctx, &rb);
-
-	if (!list_empty(&again))
-		io_iopoll_queue(&again);
 }
 
 static int io_do_iopoll(struct io_ring_ctx *ctx, unsigned int *nr_events,
@@ -2782,22 +2764,6 @@ static void kiocb_end_write(struct io_kiocb *req)
 	file_end_write(req->file);
 }
 
-static void io_complete_rw_common(struct kiocb *kiocb, long res,
-				  unsigned int issue_flags)
-{
-	struct io_kiocb *req = container_of(kiocb, struct io_kiocb, rw.kiocb);
-	int cflags = 0;
-
-	if (kiocb->ki_flags & IOCB_WRITE)
-		kiocb_end_write(req);
-
-	if (res != req->result)
-		req_set_fail_links(req);
-	if (req->flags & REQ_F_BUFFER_SELECTED)
-		cflags = io_put_rw_kbuf(req);
-	__io_req_complete(req, issue_flags, res, cflags);
-}
-
 #ifdef CONFIG_BLOCK
 static bool io_resubmit_prep(struct io_kiocb *req)
 {
@@ -2833,15 +2799,12 @@ static bool io_resubmit_prep(struct io_kiocb *req)
 }
 #endif
 
-static bool io_rw_reissue(struct io_kiocb *req, long res)
+static bool io_rw_reissue(struct io_kiocb *req)
 {
 #ifdef CONFIG_BLOCK
-	umode_t mode;
+	umode_t mode = file_inode(req->file)->i_mode;
 	int ret;
 
-	if (res != -EAGAIN && res != -EOPNOTSUPP)
-		return false;
-	mode = file_inode(req->file)->i_mode;
 	if (!S_ISBLK(mode) && !S_ISREG(mode))
 		return false;
 	if ((req->flags & REQ_F_NOWAIT) || io_wq_current_is_worker())
@@ -2864,8 +2827,18 @@ static bool io_rw_reissue(struct io_kiocb *req, long res)
 static void __io_complete_rw(struct io_kiocb *req, long res, long res2,
 			     unsigned int issue_flags)
 {
-	if (!io_rw_reissue(req, res))
-		io_complete_rw_common(&req->rw.kiocb, res, issue_flags);
+	int cflags = 0;
+
+	if ((res == -EAGAIN || res == -EOPNOTSUPP) && io_rw_reissue(req))
+		return;
+	if (res != req->result)
+		req_set_fail_links(req);
+
+	if (req->rw.kiocb.ki_flags & IOCB_WRITE)
+		kiocb_end_write(req);
+	if (req->flags & REQ_F_BUFFER_SELECTED)
+		cflags = io_put_rw_kbuf(req);
+	__io_req_complete(req, issue_flags, res, cflags);
 }
 
 static void io_complete_rw(struct kiocb *kiocb, long res, long res2)
