@@ -763,6 +763,12 @@ config HAVE_IRQ_EXIT_ON_IRQ_STACK
 	  This spares a stack switch and improves cache usage on softirq
 	  processing.
 
+config HAVE_SOFTIRQ_ON_OWN_STACK
+	bool
+	help
+	  Architecture provides a function to run __do_softirq() on a
+	  seperate stack.
+
 config PGTABLE_LEVELS
 	int
 	default 2
@@ -1093,6 +1099,15 @@ config HAVE_STATIC_CALL
 config HAVE_STATIC_CALL_INLINE
 	bool
 	depends on HAVE_STATIC_CALL
+
+config HAVE_PREEMPT_DYNAMIC
+	bool
+	depends on HAVE_STATIC_CALL
+	depends on GENERIC_ENTRY
+	help
+	   Select this if the architecture support boot time preempt setting
+	   on top of static calls. It is strongly advised to support inline
+	   static call to avoid any overhead.
 
 config ARCH_WANT_LD_ORPHAN_WARN
 	bool
