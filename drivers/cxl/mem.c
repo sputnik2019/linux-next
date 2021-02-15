@@ -384,8 +384,8 @@ static int __cxl_mem_mbox_send_cmd(struct cxl_mem *cxlm,
 static int cxl_mem_mbox_get(struct cxl_mem *cxlm)
 {
 	struct device *dev = &cxlm->pdev->dev;
-	int rc = -EBUSY;
 	u64 md_status;
+	int rc;
 
 	mutex_lock_io(&cxlm->mbox_mutex);
 
