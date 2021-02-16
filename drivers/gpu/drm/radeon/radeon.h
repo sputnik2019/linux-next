@@ -453,11 +453,6 @@ struct radeon_surface_reg {
 struct radeon_mman {
 	struct ttm_bo_device		bdev;
 	bool				initialized;
-
-#if defined(CONFIG_DEBUG_FS)
-	struct dentry			*vram;
-	struct dentry			*gtt;
-#endif
 };
 
 struct radeon_bo_list {
@@ -1110,9 +1105,6 @@ struct radeon_cs_packet {
 typedef int (*radeon_packet0_check_t)(struct radeon_cs_parser *p,
 				      struct radeon_cs_packet *pkt,
 				      unsigned idx, unsigned reg);
-typedef int (*radeon_packet3_check_t)(struct radeon_cs_parser *p,
-				      struct radeon_cs_packet *pkt);
-
 
 /*
  * AGP
