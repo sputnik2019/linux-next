@@ -4871,7 +4871,7 @@ F:	Documentation/networking/decnet.rst
 F:	net/decnet/
 
 DECSTATION PLATFORM SUPPORT
-M:	"Maciej W. Rozycki" <macro@linux-mips.org>
+M:	"Maciej W. Rozycki" <macro@orcam.me.uk>
 L:	linux-mips@vger.kernel.org
 S:	Maintained
 W:	http://www.linux-mips.org/wiki/DECstation
@@ -4880,12 +4880,12 @@ F:	arch/mips/include/asm/dec/
 F:	arch/mips/include/asm/mach-dec/
 
 DEFXX FDDI NETWORK DRIVER
-M:	"Maciej W. Rozycki" <macro@linux-mips.org>
+M:	"Maciej W. Rozycki" <macro@orcam.me.uk>
 S:	Maintained
 F:	drivers/net/fddi/defxx.*
 
 DEFZA FDDI NETWORK DRIVER
-M:	"Maciej W. Rozycki" <macro@linux-mips.org>
+M:	"Maciej W. Rozycki" <macro@orcam.me.uk>
 S:	Maintained
 F:	drivers/net/fddi/defza.*
 
@@ -6148,7 +6148,7 @@ F:	include/linux/dim.h
 F:	lib/dim/
 
 DZ DECSTATION DZ11 SERIAL DRIVER
-M:	"Maciej W. Rozycki" <macro@linux-mips.org>
+M:	"Maciej W. Rozycki" <macro@orcam.me.uk>
 S:	Maintained
 F:	drivers/tty/serial/dz.*
 
@@ -9671,6 +9671,7 @@ M:	Aleksandar Markovic <aleksandar.qemu.devel@gmail.com>
 L:	linux-mips@vger.kernel.org
 L:	kvm@vger.kernel.org
 S:	Maintained
+T:	git git://git.kernel.org/pub/scm/virt/kvm/kvm.git
 F:	arch/mips/include/asm/kvm*
 F:	arch/mips/include/uapi/asm/kvm*
 F:	arch/mips/kvm/
@@ -11834,8 +11835,7 @@ L:	linux-mips@vger.kernel.org
 S:	Maintained
 F:	arch/mips/include/asm/mach-loongson2ef/
 F:	arch/mips/loongson2ef/
-F:	drivers/*/*/*loongson2*
-F:	drivers/*/*loongson2*
+F:	drivers/cpufreq/loongson2_cpufreq.c
 
 MIPS/LOONGSON64 ARCHITECTURE
 M:	Huacai Chen <chenhuacai@kernel.org>
@@ -11844,8 +11844,6 @@ L:	linux-mips@vger.kernel.org
 S:	Maintained
 F:	arch/mips/include/asm/mach-loongson64/
 F:	arch/mips/loongson64/
-F:	drivers/*/*/*loongson3*
-F:	drivers/*/*loongson3*
 F:	drivers/irqchip/irq-loongson*
 F:	drivers/platform/mips/cpu_hwmon.c
 
@@ -14027,7 +14025,6 @@ L:	linux-mips@vger.kernel.org
 S:	Odd Fixes
 F:	arch/mips/boot/dts/img/pistachio*
 F:	arch/mips/configs/pistachio*_defconfig
-F:	arch/mips/include/asm/mach-pistachio/
 F:	arch/mips/pistachio/
 
 PKTCDVD DRIVER
@@ -18044,7 +18041,7 @@ F:	Documentation/networking/tuntap.rst
 F:	arch/um/os-Linux/drivers/
 
 TURBOCHANNEL SUBSYSTEM
-M:	"Maciej W. Rozycki" <macro@linux-mips.org>
+M:	"Maciej W. Rozycki" <macro@orcam.me.uk>
 M:	Ralf Baechle <ralf@linux-mips.org>
 L:	linux-mips@vger.kernel.org
 S:	Maintained
@@ -19677,7 +19674,7 @@ F:	Documentation/admin-guide/blockdev/zram.rst
 F:	drivers/block/zram/
 
 ZS DECSTATION Z85C30 SERIAL DRIVER
-M:	"Maciej W. Rozycki" <macro@linux-mips.org>
+M:	"Maciej W. Rozycki" <macro@orcam.me.uk>
 S:	Maintained
 F:	drivers/tty/serial/zs.*
 
