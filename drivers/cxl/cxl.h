@@ -55,6 +55,7 @@
 	(FIELD_GET(CXLMDEV_RESET_NEEDED_MASK, status) !=                       \
 	 CXLMDEV_RESET_NEEDED_NOT)
 
+struct cxl_memdev;
 /**
  * struct cxl_mem - A CXL memory device
  * @pdev: The PCI device associated with this CXL device.
@@ -72,6 +73,7 @@
 struct cxl_mem {
 	struct pci_dev *pdev;
 	void __iomem *regs;
+	struct cxl_memdev *cxlmd;
 
 	void __iomem *status_regs;
 	void __iomem *mbox_regs;
@@ -85,4 +87,5 @@ struct cxl_mem {
 	struct range ram_range;
 };
 
+extern struct bus_type cxl_bus_type;
 #endif /* __CXL_H__ */
