@@ -639,6 +639,33 @@ static int renoir_dpm_set_jpeg_enable(struct smu_context *smu, bool enable)
 	return ret;
 }
 
+static int renoir_mode2_reset(struct smu_context *smu)
+{
+	int ret;
+
+	ret = renoir_dpm_set_jpeg_enable(smu, false);
+	if (ret)
+		return ret;
+	ret = renoir_dpm_set_vcn_enable(smu, false);
+	if (ret)
+		return ret;
+	ret = smu_v12_0_powergate_sdma(smu, true);
+	if (ret)
+		return ret;
+	ret = smu_v12_0_mode2_reset(smu);
+	if (ret)
+		return ret;
+	ret = smu_v12_0_powergate_sdma(smu, false);
+	if (ret)
+		return ret;
+	ret = renoir_dpm_set_vcn_enable(smu, true);
+	if (ret)
+		return ret;
+	ret = renoir_dpm_set_jpeg_enable(smu, true);
+
+	return ret;
+}
+
 static int renoir_force_dpm_limit_value(struct smu_context *smu, bool highest)
 {
 	int ret = 0, i = 0;
@@ -1322,7 +1349,7 @@ static const struct pptable_funcs renoir_ppt_funcs = {
 	.feature_is_enabled = smu_cmn_feature_is_enabled,
 	.disable_all_features_with_exception = smu_cmn_disable_all_features_with_exception,
 	.get_dpm_ultimate_freq = renoir_get_dpm_ultimate_freq,
-	.mode2_reset = smu_v12_0_mode2_reset,
+	.mode2_reset = renoir_mode2_reset,
 	.set_soft_freq_limited_range = smu_v12_0_set_soft_freq_limited_range,
 	.set_driver_table_location = smu_v12_0_set_driver_table_location,
 	.is_dpm_running = renoir_is_dpm_running,
