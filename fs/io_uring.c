@@ -3605,10 +3605,7 @@ static int io_read(struct io_kiocb *req, unsigned int issue_flags)
 	ret = io_iter_do_read(req, iter);
 
 	if (ret == -EIOCBQUEUED) {
-		/* it's faster to check here then delegate to kfree */
-		if (iovec)
-			kfree(iovec);
-		return 0;
+		goto out_free;
 	} else if (ret == -EAGAIN) {
 		/* IOPOLL retry should happen for io-wq threads */
 		if (!force_nonblock && !(req->ctx->flags & IORING_SETUP_IOPOLL))
@@ -3629,6 +3626,7 @@ static int io_read(struct io_kiocb *req, unsigned int issue_flags)
 	if (ret2)
 		return ret2;
 
+	iovec = NULL;
 	rw = req->async_data;
 	/* now use our persistent iterator, if we aren't already */
 	iter = &rw->iter;
@@ -3655,6 +3653,10 @@ static int io_read(struct io_kiocb *req, unsigned int issue_flags)
 	} while (ret > 0 && ret < io_size);
 done:
 	kiocb_done(kiocb, ret, issue_flags);
+out_free:
+	/* it's faster to check here then delegate to kfree */
+	if (iovec)
+		kfree(iovec);
 	return 0;
 }
 
