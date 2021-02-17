@@ -524,30 +524,13 @@ static int nv_asic_mode1_reset(struct amdgpu_device *adev)
 
 static int nv_asic_mode2_reset(struct amdgpu_device *adev)
 {
-	u32 i;
-	int ret = 0;
+	int ret;
 
 	amdgpu_atombios_scratch_regs_engine_hung(adev, true);
-
-	/* disable BM */
-	pci_clear_master(adev->pdev);
-
-	amdgpu_device_cache_pci_state(adev->pdev);
 
 	ret = amdgpu_dpm_mode2_reset(adev);
 	if (ret)
 		dev_err(adev->dev, "GPU mode2 reset failed\n");
-
-	amdgpu_device_load_pci_state(adev->pdev);
-
-	/* wait for asic to come out of reset */
-	for (i = 0; i < adev->usec_timeout; i++) {
-		u32 memsize = adev->nbio.funcs->get_memsize(adev);
-
-		if (memsize != 0xffffffff)
-			break;
-		udelay(1);
-	}
 
 	amdgpu_atombios_scratch_regs_engine_hung(adev, false);
 

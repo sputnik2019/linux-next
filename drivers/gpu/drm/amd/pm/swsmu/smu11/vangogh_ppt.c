@@ -1775,7 +1775,26 @@ static int vangogh_mode_reset(struct smu_context *smu, int type)
 
 static int vangogh_mode2_reset(struct smu_context *smu)
 {
-	return vangogh_mode_reset(smu, SMU_RESET_MODE_2);
+	struct amdgpu_device *adev = smu->adev;
+	int ret, i;
+
+	/* disable BM */
+	pci_clear_master(adev->pdev);
+
+	amdgpu_device_cache_pci_state(adev->pdev);
+	ret = vangogh_mode_reset(smu, SMU_RESET_MODE_2);
+	amdgpu_device_load_pci_state(adev->pdev);
+
+	/* wait for asic to come out of reset */
+	for (i = 0; i < adev->usec_timeout; i++) {
+		u32 memsize = adev->nbio.funcs->get_memsize(adev);
+
+		if (memsize != 0xffffffff)
+			break;
+		udelay(1);
+	}
+
+	return ret;
 }
 
 static int vangogh_get_power_limit(struct smu_context *smu)
