@@ -1778,6 +1778,12 @@ static int vangogh_mode2_reset(struct smu_context *smu)
 	struct amdgpu_device *adev = smu->adev;
 	int ret, i;
 
+	ret = vangogh_dpm_set_jpeg_enable(smu, false);
+	if (ret)
+		return ret;
+	ret = vangogh_dpm_set_vcn_enable(smu, false);
+	if (ret)
+		return ret;
 	/* disable BM */
 	pci_clear_master(adev->pdev);
 
@@ -1793,6 +1799,10 @@ static int vangogh_mode2_reset(struct smu_context *smu)
 			break;
 		udelay(1);
 	}
+	ret = vangogh_dpm_set_vcn_enable(smu, true);
+	if (ret)
+		return ret;
+	ret = vangogh_dpm_set_jpeg_enable(smu, true);
 
 	return ret;
 }
