@@ -350,7 +350,8 @@ static int renoir_od_edit_dpm_table(struct smu_context *smu,
 	struct smu_dpm_context *smu_dpm_ctx = &(smu->smu_dpm);
 
 	if (!(smu_dpm_ctx->dpm_level == AMD_DPM_FORCED_LEVEL_MANUAL)) {
-		dev_warn(smu->adev->dev, "Fine grain is not enabled!\n");
+		dev_warn(smu->adev->dev,
+			"pp_od_clk_voltage is not accessible if power_dpm_force_performance_level is not in manual mode!\n");
 		return -EINVAL;
 	}
 
@@ -652,6 +653,33 @@ static int renoir_dpm_set_jpeg_enable(struct smu_context *smu, bool enable)
 				return ret;
 		}
 	}
+
+	return ret;
+}
+
+static int renoir_mode2_reset(struct smu_context *smu)
+{
+	int ret;
+
+	ret = renoir_dpm_set_jpeg_enable(smu, false);
+	if (ret)
+		return ret;
+	ret = renoir_dpm_set_vcn_enable(smu, false);
+	if (ret)
+		return ret;
+	ret = smu_v12_0_powergate_sdma(smu, true);
+	if (ret)
+		return ret;
+	ret = smu_v12_0_mode2_reset(smu);
+	if (ret)
+		return ret;
+	ret = smu_v12_0_powergate_sdma(smu, false);
+	if (ret)
+		return ret;
+	ret = renoir_dpm_set_vcn_enable(smu, true);
+	if (ret)
+		return ret;
+	ret = renoir_dpm_set_jpeg_enable(smu, true);
 
 	return ret;
 }
@@ -1129,7 +1157,7 @@ static int renoir_get_smu_metrics_data(struct smu_context *smu,
 		*value = metrics->AverageUvdActivity / 100;
 		break;
 	case METRICS_AVERAGE_SOCKETPOWER:
-		*value = metrics->CurrentSocketPower << 8;
+		*value = (metrics->CurrentSocketPower << 8) / 1000;
 		break;
 	case METRICS_TEMPERATURE_EDGE:
 		*value = (metrics->GfxTemperature / 100) *
@@ -1257,7 +1285,7 @@ static ssize_t renoir_get_gpu_metrics(struct smu_context *smu,
 	if (ret)
 		return ret;
 
-	smu_v12_0_init_gpu_metrics_v2_0(gpu_metrics);
+	smu_cmn_init_soft_gpu_metrics(gpu_metrics, 2, 0);
 
 	gpu_metrics->temperature_gfx = metrics.GfxTemperature;
 	gpu_metrics->temperature_soc = metrics.SocTemperature;
@@ -1298,6 +1326,8 @@ static ssize_t renoir_get_gpu_metrics(struct smu_context *smu,
 
 	gpu_metrics->fan_pwm = metrics.FanPwm;
 
+	gpu_metrics->system_clock_counter = ktime_get_boottime_ns();
+
 	*table = (void *)gpu_metrics;
 
 	return sizeof(struct gpu_metrics_v2_0);
@@ -1337,7 +1367,7 @@ static const struct pptable_funcs renoir_ppt_funcs = {
 	.feature_is_enabled = smu_cmn_feature_is_enabled,
 	.disable_all_features_with_exception = smu_cmn_disable_all_features_with_exception,
 	.get_dpm_ultimate_freq = renoir_get_dpm_ultimate_freq,
-	.mode2_reset = smu_v12_0_mode2_reset,
+	.mode2_reset = renoir_mode2_reset,
 	.set_soft_freq_limited_range = smu_v12_0_set_soft_freq_limited_range,
 	.set_driver_table_location = smu_v12_0_set_driver_table_location,
 	.is_dpm_running = renoir_is_dpm_running,
