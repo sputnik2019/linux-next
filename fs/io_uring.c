@@ -104,6 +104,10 @@
 #define IORING_MAX_RESTRICTIONS	(IORING_RESTRICTION_LAST + \
 				 IORING_REGISTER_LAST + IORING_OP_LAST)
 
+#define SQE_VALID_FLAGS	(IOSQE_FIXED_FILE|IOSQE_IO_DRAIN|IOSQE_IO_LINK|	\
+				IOSQE_IO_HARDLINK | IOSQE_ASYNC | \
+				IOSQE_BUFFER_SELECT)
+
 struct io_uring {
 	u32 head ____cacheline_aligned_in_smp;
 	u32 tail ____cacheline_aligned_in_smp;
@@ -279,8 +283,14 @@ struct io_comp_state {
 	struct list_head	locked_free_list;
 };
 
+struct io_submit_link {
+	struct io_kiocb		*head;
+	struct io_kiocb		*last;
+};
+
 struct io_submit_state {
 	struct blk_plug		plug;
+	struct io_submit_link	link;
 
 	/*
 	 * io_kiocb alloc cache
@@ -3465,19 +3475,9 @@ static inline int io_rw_prep_async(struct io_kiocb *req, int rw)
 
 static int io_read_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
-	ssize_t ret;
-
-	ret = io_prep_rw(req, sqe);
-	if (ret)
-		return ret;
-
 	if (unlikely(!(req->file->f_mode & FMODE_READ)))
 		return -EBADF;
-
-	/* either don't need iovec imported or already have it */
-	if (!req->async_data)
-		return 0;
-	return io_rw_prep_async(req, READ);
+	return io_prep_rw(req, sqe);
 }
 
 /*
@@ -3662,19 +3662,9 @@ out_free:
 
 static int io_write_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
-	ssize_t ret;
-
-	ret = io_prep_rw(req, sqe);
-	if (ret)
-		return ret;
-
 	if (unlikely(!(req->file->f_mode & FMODE_WRITE)))
 		return -EBADF;
-
-	/* either don't need iovec imported or already have it */
-	if (!req->async_data)
-		return 0;
-	return io_rw_prep_async(req, WRITE);
+	return io_prep_rw(req, sqe);
 }
 
 static int io_write(struct io_kiocb *req, unsigned int issue_flags)
@@ -4011,7 +4001,7 @@ static int io_nop(struct io_kiocb *req, unsigned int issue_flags)
 	return 0;
 }
 
-static int io_prep_fsync(struct io_kiocb *req, const struct io_uring_sqe *sqe)
+static int io_fsync_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
 	struct io_ring_ctx *ctx = req->ctx;
 
@@ -4598,12 +4588,9 @@ err:
 	return 0;
 }
 
-static int io_prep_sfr(struct io_kiocb *req, const struct io_uring_sqe *sqe)
+static int io_sfr_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
 	struct io_ring_ctx *ctx = req->ctx;
-
-	if (!req->file)
-		return -EBADF;
 
 	if (unlikely(ctx->flags & IORING_SETUP_IOPOLL))
 		return -EINVAL;
@@ -4664,11 +4651,21 @@ static int io_sendmsg_copy_hdr(struct io_kiocb *req,
 				   req->sr_msg.msg_flags, &iomsg->free_iov);
 }
 
+static int io_sendmsg_prep_async(struct io_kiocb *req)
+{
+	int ret;
+
+	if (!io_op_defs[req->opcode].needs_async_data)
+		return 0;
+	ret = io_sendmsg_copy_hdr(req, req->async_data);
+	if (!ret)
+		req->flags |= REQ_F_NEED_CLEANUP;
+	return ret;
+}
+
 static int io_sendmsg_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
-	struct io_async_msghdr *async_msg = req->async_data;
 	struct io_sr_msg *sr = &req->sr_msg;
-	int ret;
 
 	if (unlikely(req->ctx->flags & IORING_SETUP_IOPOLL))
 		return -EINVAL;
@@ -4681,13 +4678,7 @@ static int io_sendmsg_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	if (req->ctx->compat)
 		sr->msg_flags |= MSG_CMSG_COMPAT;
 #endif
-
-	if (!async_msg || !io_op_defs[req->opcode].needs_async_data)
-		return 0;
-	ret = io_sendmsg_copy_hdr(req, async_msg);
-	if (!ret)
-		req->flags |= REQ_F_NEED_CLEANUP;
-	return ret;
+	return 0;
 }
 
 static int io_sendmsg(struct io_kiocb *req, unsigned int issue_flags)
@@ -4881,12 +4872,21 @@ static inline unsigned int io_put_recv_kbuf(struct io_kiocb *req)
 	return io_put_kbuf(req, req->sr_msg.kbuf);
 }
 
-static int io_recvmsg_prep(struct io_kiocb *req,
-			   const struct io_uring_sqe *sqe)
+static int io_recvmsg_prep_async(struct io_kiocb *req)
 {
-	struct io_async_msghdr *async_msg = req->async_data;
-	struct io_sr_msg *sr = &req->sr_msg;
 	int ret;
+
+	if (!io_op_defs[req->opcode].needs_async_data)
+		return 0;
+	ret = io_recvmsg_copy_hdr(req, req->async_data);
+	if (!ret)
+		req->flags |= REQ_F_NEED_CLEANUP;
+	return ret;
+}
+
+static int io_recvmsg_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
+{
+	struct io_sr_msg *sr = &req->sr_msg;
 
 	if (unlikely(req->ctx->flags & IORING_SETUP_IOPOLL))
 		return -EINVAL;
@@ -4900,13 +4900,7 @@ static int io_recvmsg_prep(struct io_kiocb *req,
 	if (req->ctx->compat)
 		sr->msg_flags |= MSG_CMSG_COMPAT;
 #endif
-
-	if (!async_msg || !io_op_defs[req->opcode].needs_async_data)
-		return 0;
-	ret = io_recvmsg_copy_hdr(req, async_msg);
-	if (!ret)
-		req->flags |= REQ_F_NEED_CLEANUP;
-	return ret;
+	return 0;
 }
 
 static int io_recvmsg(struct io_kiocb *req, unsigned int issue_flags)
@@ -5059,10 +5053,17 @@ static int io_accept(struct io_kiocb *req, unsigned int issue_flags)
 	return 0;
 }
 
+static int io_connect_prep_async(struct io_kiocb *req)
+{
+	struct io_async_connect *io = req->async_data;
+	struct io_connect *conn = &req->connect;
+
+	return move_addr_to_kernel(conn->addr, conn->addr_len, &io->address);
+}
+
 static int io_connect_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
 	struct io_connect *conn = &req->connect;
-	struct io_async_connect *io = req->async_data;
 
 	if (unlikely(req->ctx->flags & IORING_SETUP_IOPOLL))
 		return -EINVAL;
@@ -5071,12 +5072,7 @@ static int io_connect_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 
 	conn->addr = u64_to_user_ptr(READ_ONCE(sqe->addr));
 	conn->addr_len =  READ_ONCE(sqe->addr2);
-
-	if (!io)
-		return 0;
-
-	return move_addr_to_kernel(conn->addr, conn->addr_len,
-					&io->address);
+	return 0;
 }
 
 static int io_connect(struct io_kiocb *req, unsigned int issue_flags)
@@ -6084,9 +6080,9 @@ static int io_req_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	case IORING_OP_POLL_REMOVE:
 		return io_poll_remove_prep(req, sqe);
 	case IORING_OP_FSYNC:
-		return io_prep_fsync(req, sqe);
+		return io_fsync_prep(req, sqe);
 	case IORING_OP_SYNC_FILE_RANGE:
-		return io_prep_sfr(req, sqe);
+		return io_sfr_prep(req, sqe);
 	case IORING_OP_SENDMSG:
 	case IORING_OP_SEND:
 		return io_sendmsg_prep(req, sqe);
@@ -6144,14 +6140,39 @@ static int io_req_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	return-EINVAL;
 }
 
-static int io_req_defer_prep(struct io_kiocb *req,
-			     const struct io_uring_sqe *sqe)
+static int io_req_prep_async(struct io_kiocb *req)
 {
-	if (!sqe)
+	switch (req->opcode) {
+	case IORING_OP_READV:
+	case IORING_OP_READ_FIXED:
+	case IORING_OP_READ:
+		return io_rw_prep_async(req, READ);
+	case IORING_OP_WRITEV:
+	case IORING_OP_WRITE_FIXED:
+	case IORING_OP_WRITE:
+		return io_rw_prep_async(req, WRITE);
+	case IORING_OP_SENDMSG:
+	case IORING_OP_SEND:
+		return io_sendmsg_prep_async(req);
+	case IORING_OP_RECVMSG:
+	case IORING_OP_RECV:
+		return io_recvmsg_prep_async(req);
+	case IORING_OP_CONNECT:
+		return io_connect_prep_async(req);
+	}
+	return 0;
+}
+
+static int io_req_defer_prep(struct io_kiocb *req)
+{
+	if (!io_op_defs[req->opcode].needs_async_data)
 		return 0;
-	if (io_alloc_async_data(req))
+	/* some opcodes init it during the inital prep */
+	if (req->async_data)
+		return 0;
+	if (__io_alloc_async_data(req))
 		return -EAGAIN;
-	return io_req_prep(req, sqe);
+	return io_req_prep_async(req);
 }
 
 static u32 io_get_sequence(struct io_kiocb *req)
@@ -6167,7 +6188,7 @@ static u32 io_get_sequence(struct io_kiocb *req)
 	return total_submitted - nr_reqs;
 }
 
-static int io_req_defer(struct io_kiocb *req, const struct io_uring_sqe *sqe)
+static int io_req_defer(struct io_kiocb *req)
 {
 	struct io_ring_ctx *ctx = req->ctx;
 	struct io_defer_entry *de;
@@ -6184,11 +6205,9 @@ static int io_req_defer(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	if (!req_need_defer(req, seq) && list_empty_careful(&ctx->defer_list))
 		return 0;
 
-	if (!req->async_data) {
-		ret = io_req_defer_prep(req, sqe);
-		if (ret)
-			return ret;
-	}
+	ret = io_req_defer_prep(req);
+	if (ret)
+		return ret;
 	io_prep_async_link(req);
 	de = kmalloc(sizeof(*de), GFP_KERNEL);
 	if (!de)
@@ -6607,11 +6626,11 @@ static void __io_queue_sqe(struct io_kiocb *req)
 		io_queue_linked_timeout(linked_timeout);
 }
 
-static void io_queue_sqe(struct io_kiocb *req, const struct io_uring_sqe *sqe)
+static void io_queue_sqe(struct io_kiocb *req)
 {
 	int ret;
 
-	ret = io_req_defer(req, sqe);
+	ret = io_req_defer(req);
 	if (ret) {
 		if (ret != -EIOCBQUEUED) {
 fail_req:
@@ -6620,161 +6639,13 @@ fail_req:
 			io_req_complete(req, ret);
 		}
 	} else if (req->flags & REQ_F_FORCE_ASYNC) {
-		if (!req->async_data) {
-			ret = io_req_defer_prep(req, sqe);
-			if (unlikely(ret))
-				goto fail_req;
-		}
+		ret = io_req_defer_prep(req);
+		if (unlikely(ret))
+			goto fail_req;
 		io_queue_async_work(req);
 	} else {
-		if (sqe) {
-			ret = io_req_prep(req, sqe);
-			if (unlikely(ret))
-				goto fail_req;
-		}
 		__io_queue_sqe(req);
 	}
-}
-
-static inline void io_queue_link_head(struct io_kiocb *req)
-{
-	if (unlikely(req->flags & REQ_F_FAIL_LINK)) {
-		io_put_req(req);
-		io_req_complete(req, -ECANCELED);
-	} else
-		io_queue_sqe(req, NULL);
-}
-
-struct io_submit_link {
-	struct io_kiocb *head;
-	struct io_kiocb *last;
-};
-
-static int io_submit_sqe(struct io_kiocb *req, const struct io_uring_sqe *sqe,
-			 struct io_submit_link *link)
-{
-	struct io_ring_ctx *ctx = req->ctx;
-	int ret;
-
-	/*
-	 * If we already have a head request, queue this one for async
-	 * submittal once the head completes. If we don't have a head but
-	 * IOSQE_IO_LINK is set in the sqe, start a new head. This one will be
-	 * submitted sync once the chain is complete. If none of those
-	 * conditions are true (normal request), then just queue it.
-	 */
-	if (link->head) {
-		struct io_kiocb *head = link->head;
-
-		/*
-		 * Taking sequential execution of a link, draining both sides
-		 * of the link also fullfils IOSQE_IO_DRAIN semantics for all
-		 * requests in the link. So, it drains the head and the
-		 * next after the link request. The last one is done via
-		 * drain_next flag to persist the effect across calls.
-		 */
-		if (req->flags & REQ_F_IO_DRAIN) {
-			head->flags |= REQ_F_IO_DRAIN;
-			ctx->drain_next = 1;
-		}
-		ret = io_req_defer_prep(req, sqe);
-		if (unlikely(ret)) {
-			/* fail even hard links since we don't submit */
-			head->flags |= REQ_F_FAIL_LINK;
-			return ret;
-		}
-		trace_io_uring_link(ctx, req, head);
-		link->last->link = req;
-		link->last = req;
-
-		/* last request of a link, enqueue the link */
-		if (!(req->flags & (REQ_F_LINK | REQ_F_HARDLINK))) {
-			io_queue_link_head(head);
-			link->head = NULL;
-		}
-	} else {
-		if (unlikely(ctx->drain_next)) {
-			req->flags |= REQ_F_IO_DRAIN;
-			ctx->drain_next = 0;
-		}
-		if (req->flags & (REQ_F_LINK | REQ_F_HARDLINK)) {
-			ret = io_req_defer_prep(req, sqe);
-			if (unlikely(ret))
-				req->flags |= REQ_F_FAIL_LINK;
-			link->head = req;
-			link->last = req;
-		} else {
-			io_queue_sqe(req, sqe);
-		}
-	}
-
-	return 0;
-}
-
-/*
- * Batched submission is done, ensure local IO is flushed out.
- */
-static void io_submit_state_end(struct io_submit_state *state,
-				struct io_ring_ctx *ctx)
-{
-	if (state->comp.nr)
-		io_submit_flush_completions(&state->comp, ctx);
-	if (state->plug_started)
-		blk_finish_plug(&state->plug);
-	io_state_file_put(state);
-}
-
-/*
- * Start submission side cache.
- */
-static void io_submit_state_start(struct io_submit_state *state,
-				  unsigned int max_ios)
-{
-	state->plug_started = false;
-	state->ios_left = max_ios;
-}
-
-static void io_commit_sqring(struct io_ring_ctx *ctx)
-{
-	struct io_rings *rings = ctx->rings;
-
-	/*
-	 * Ensure any loads from the SQEs are done at this point,
-	 * since once we write the new head, the application could
-	 * write new data to them.
-	 */
-	smp_store_release(&rings->sq.head, ctx->cached_sq_head);
-}
-
-/*
- * Fetch an sqe, if one is available. Note that sqe_ptr will point to memory
- * that is mapped by userspace. This means that care needs to be taken to
- * ensure that reads are stable, as we cannot rely on userspace always
- * being a good citizen. If members of the sqe are validated and then later
- * used, it's important that those reads are done through READ_ONCE() to
- * prevent a re-load down the line.
- */
-static const struct io_uring_sqe *io_get_sqe(struct io_ring_ctx *ctx)
-{
-	u32 *sq_array = ctx->sq_array;
-	unsigned head;
-
-	/*
-	 * The cached sq head (or cq tail) serves two purposes:
-	 *
-	 * 1) allows us to batch the cost of updating the user visible
-	 *    head updates.
-	 * 2) allows the kernel side to track the head on its own, even
-	 *    though the application is the one updating it.
-	 */
-	head = READ_ONCE(sq_array[ctx->cached_sq_head++ & ctx->sq_mask]);
-	if (likely(head < ctx->sq_entries))
-		return &ctx->sq_sqes[head];
-
-	/* drop invalid entries */
-	ctx->cached_sq_dropped++;
-	WRITE_ONCE(ctx->rings->sq_dropped, ctx->cached_sq_dropped);
-	return NULL;
 }
 
 /*
@@ -6802,10 +6673,6 @@ static inline bool io_check_restriction(struct io_ring_ctx *ctx,
 
 	return true;
 }
-
-#define SQE_VALID_FLAGS	(IOSQE_FIXED_FILE|IOSQE_IO_DRAIN|IOSQE_IO_LINK|	\
-				IOSQE_IO_HARDLINK | IOSQE_ASYNC | \
-				IOSQE_BUFFER_SELECT)
 
 static int io_init_req(struct io_ring_ctx *ctx, struct io_kiocb *req,
 		       const struct io_uring_sqe *sqe)
@@ -6884,10 +6751,156 @@ static int io_init_req(struct io_ring_ctx *ctx, struct io_kiocb *req,
 	return ret;
 }
 
+static int io_submit_sqe(struct io_ring_ctx *ctx, struct io_kiocb *req,
+			 const struct io_uring_sqe *sqe)
+{
+	struct io_submit_link *link = &ctx->submit_state.link;
+	int ret;
+
+	ret = io_init_req(ctx, req, sqe);
+	if (unlikely(ret)) {
+fail_req:
+		io_put_req(req);
+		io_req_complete(req, ret);
+		if (link->head) {
+			/* fail even hard links since we don't submit */
+			link->head->flags |= REQ_F_FAIL_LINK;
+			io_put_req(link->head);
+			io_req_complete(link->head, -ECANCELED);
+			link->head = NULL;
+		}
+		return ret;
+	}
+	ret = io_req_prep(req, sqe);
+	if (unlikely(ret))
+		goto fail_req;
+
+	/* don't need @sqe from now on */
+	trace_io_uring_submit_sqe(ctx, req->opcode, req->user_data,
+				true, ctx->flags & IORING_SETUP_SQPOLL);
+
+	/*
+	 * If we already have a head request, queue this one for async
+	 * submittal once the head completes. If we don't have a head but
+	 * IOSQE_IO_LINK is set in the sqe, start a new head. This one will be
+	 * submitted sync once the chain is complete. If none of those
+	 * conditions are true (normal request), then just queue it.
+	 */
+	if (link->head) {
+		struct io_kiocb *head = link->head;
+
+		/*
+		 * Taking sequential execution of a link, draining both sides
+		 * of the link also fullfils IOSQE_IO_DRAIN semantics for all
+		 * requests in the link. So, it drains the head and the
+		 * next after the link request. The last one is done via
+		 * drain_next flag to persist the effect across calls.
+		 */
+		if (req->flags & REQ_F_IO_DRAIN) {
+			head->flags |= REQ_F_IO_DRAIN;
+			ctx->drain_next = 1;
+		}
+		ret = io_req_defer_prep(req);
+		if (unlikely(ret))
+			goto fail_req;
+		trace_io_uring_link(ctx, req, head);
+		link->last->link = req;
+		link->last = req;
+
+		/* last request of a link, enqueue the link */
+		if (!(req->flags & (REQ_F_LINK | REQ_F_HARDLINK))) {
+			io_queue_sqe(head);
+			link->head = NULL;
+		}
+	} else {
+		if (unlikely(ctx->drain_next)) {
+			req->flags |= REQ_F_IO_DRAIN;
+			ctx->drain_next = 0;
+		}
+		if (req->flags & (REQ_F_LINK | REQ_F_HARDLINK)) {
+			link->head = req;
+			link->last = req;
+		} else {
+			io_queue_sqe(req);
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * Batched submission is done, ensure local IO is flushed out.
+ */
+static void io_submit_state_end(struct io_submit_state *state,
+				struct io_ring_ctx *ctx)
+{
+	if (state->link.head)
+		io_queue_sqe(state->link.head);
+	if (state->comp.nr)
+		io_submit_flush_completions(&state->comp, ctx);
+	if (state->plug_started)
+		blk_finish_plug(&state->plug);
+	io_state_file_put(state);
+}
+
+/*
+ * Start submission side cache.
+ */
+static void io_submit_state_start(struct io_submit_state *state,
+				  unsigned int max_ios)
+{
+	state->plug_started = false;
+	state->ios_left = max_ios;
+	/* set only head, no need to init link_last in advance */
+	state->link.head = NULL;
+}
+
+static void io_commit_sqring(struct io_ring_ctx *ctx)
+{
+	struct io_rings *rings = ctx->rings;
+
+	/*
+	 * Ensure any loads from the SQEs are done at this point,
+	 * since once we write the new head, the application could
+	 * write new data to them.
+	 */
+	smp_store_release(&rings->sq.head, ctx->cached_sq_head);
+}
+
+/*
+ * Fetch an sqe, if one is available. Note that sqe_ptr will point to memory
+ * that is mapped by userspace. This means that care needs to be taken to
+ * ensure that reads are stable, as we cannot rely on userspace always
+ * being a good citizen. If members of the sqe are validated and then later
+ * used, it's important that those reads are done through READ_ONCE() to
+ * prevent a re-load down the line.
+ */
+static const struct io_uring_sqe *io_get_sqe(struct io_ring_ctx *ctx)
+{
+	u32 *sq_array = ctx->sq_array;
+	unsigned head;
+
+	/*
+	 * The cached sq head (or cq tail) serves two purposes:
+	 *
+	 * 1) allows us to batch the cost of updating the user visible
+	 *    head updates.
+	 * 2) allows the kernel side to track the head on its own, even
+	 *    though the application is the one updating it.
+	 */
+	head = READ_ONCE(sq_array[ctx->cached_sq_head++ & ctx->sq_mask]);
+	if (likely(head < ctx->sq_entries))
+		return &ctx->sq_sqes[head];
+
+	/* drop invalid entries */
+	ctx->cached_sq_dropped++;
+	WRITE_ONCE(ctx->rings->sq_dropped, ctx->cached_sq_dropped);
+	return NULL;
+}
+
 static int io_submit_sqes(struct io_ring_ctx *ctx, unsigned int nr)
 {
-	struct io_submit_link link;
-	int i, submitted = 0;
+	int submitted = 0;
 
 	/* if we have a backlog and couldn't flush it all, return BUSY */
 	if (test_bit(0, &ctx->sq_check_overflow)) {
@@ -6903,14 +6916,11 @@ static int io_submit_sqes(struct io_ring_ctx *ctx, unsigned int nr)
 
 	percpu_counter_add(&current->io_uring->inflight, nr);
 	refcount_add(nr, &current->usage);
-
 	io_submit_state_start(&ctx->submit_state, nr);
-	link.head = NULL;
 
-	for (i = 0; i < nr; i++) {
+	while (submitted < nr) {
 		const struct io_uring_sqe *sqe;
 		struct io_kiocb *req;
-		int err;
 
 		req = io_alloc_req(ctx);
 		if (unlikely(!req)) {
@@ -6925,20 +6935,8 @@ static int io_submit_sqes(struct io_ring_ctx *ctx, unsigned int nr)
 		}
 		/* will complete beyond this point, count as submitted */
 		submitted++;
-
-		err = io_init_req(ctx, req, sqe);
-		if (unlikely(err)) {
-fail_req:
-			io_put_req(req);
-			io_req_complete(req, err);
+		if (io_submit_sqe(ctx, req, sqe))
 			break;
-		}
-
-		trace_io_uring_submit_sqe(ctx, req->opcode, req->user_data,
-					true, ctx->flags & IORING_SETUP_SQPOLL);
-		err = io_submit_sqe(req, sqe, &link);
-		if (err)
-			goto fail_req;
 	}
 
 	if (unlikely(submitted != nr)) {
@@ -6950,10 +6948,8 @@ fail_req:
 		percpu_counter_sub(&tctx->inflight, unused);
 		put_task_struct_many(current, unused);
 	}
-	if (link.head)
-		io_queue_link_head(link.head);
-	io_submit_state_end(&ctx->submit_state, ctx);
 
+	io_submit_state_end(&ctx->submit_state, ctx);
 	 /* Commit SQ ring head once we've consumed and submitted all SQEs */
 	io_commit_sqring(ctx);
 
