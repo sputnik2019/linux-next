@@ -31,6 +31,10 @@ enum {
 	DSA_NOTIFIER_VLAN_DEL,
 	DSA_NOTIFIER_MTU,
 	DSA_NOTIFIER_TAG_PROTO,
+	DSA_NOTIFIER_MRP_ADD,
+	DSA_NOTIFIER_MRP_DEL,
+	DSA_NOTIFIER_MRP_ADD_RING_ROLE,
+	DSA_NOTIFIER_MRP_DEL_RING_ROLE,
 };
 
 /* DSA_NOTIFIER_AGEING_TIME */
@@ -75,6 +79,7 @@ struct dsa_notifier_vlan_info {
 	const struct switchdev_obj_port_vlan *vlan;
 	int sw_index;
 	int port;
+	struct netlink_ext_ack *extack;
 };
 
 /* DSA_NOTIFIER_MTU */
@@ -88,6 +93,20 @@ struct dsa_notifier_mtu_info {
 /* DSA_NOTIFIER_TAG_PROTO_* */
 struct dsa_notifier_tag_proto_info {
 	const struct dsa_device_ops *tag_ops;
+};
+
+/* DSA_NOTIFIER_MRP_* */
+struct dsa_notifier_mrp_info {
+	const struct switchdev_obj_mrp *mrp;
+	int sw_index;
+	int port;
+};
+
+/* DSA_NOTIFIER_MRP_* */
+struct dsa_notifier_mrp_ring_role_info {
+	const struct switchdev_obj_ring_role_mrp *mrp;
+	int sw_index;
+	int port;
 };
 
 struct dsa_switchdev_event_work {
@@ -169,7 +188,8 @@ int dsa_port_lag_change(struct dsa_port *dp,
 int dsa_port_lag_join(struct dsa_port *dp, struct net_device *lag_dev,
 		      struct netdev_lag_upper_info *uinfo);
 void dsa_port_lag_leave(struct dsa_port *dp, struct net_device *lag_dev);
-int dsa_port_vlan_filtering(struct dsa_port *dp, bool vlan_filtering);
+int dsa_port_vlan_filtering(struct dsa_port *dp, bool vlan_filtering,
+			    struct netlink_ext_ack *extack);
 bool dsa_port_skip_vlan_configuration(struct dsa_port *dp);
 int dsa_port_ageing_time(struct dsa_port *dp, clock_t ageing_clock);
 int dsa_port_mtu_change(struct dsa_port *dp, int new_mtu,
@@ -192,9 +212,18 @@ int dsa_port_bridge_flags(const struct dsa_port *dp,
 int dsa_port_mrouter(struct dsa_port *dp, bool mrouter,
 		     struct netlink_ext_ack *extack);
 int dsa_port_vlan_add(struct dsa_port *dp,
-		      const struct switchdev_obj_port_vlan *vlan);
+		      const struct switchdev_obj_port_vlan *vlan,
+		      struct netlink_ext_ack *extack);
 int dsa_port_vlan_del(struct dsa_port *dp,
 		      const struct switchdev_obj_port_vlan *vlan);
+int dsa_port_mrp_add(const struct dsa_port *dp,
+		     const struct switchdev_obj_mrp *mrp);
+int dsa_port_mrp_del(const struct dsa_port *dp,
+		     const struct switchdev_obj_mrp *mrp);
+int dsa_port_mrp_add_ring_role(const struct dsa_port *dp,
+			       const struct switchdev_obj_ring_role_mrp *mrp);
+int dsa_port_mrp_del_ring_role(const struct dsa_port *dp,
+			       const struct switchdev_obj_ring_role_mrp *mrp);
 int dsa_port_link_register_of(struct dsa_port *dp);
 void dsa_port_link_unregister_of(struct dsa_port *dp);
 int dsa_port_hsr_join(struct dsa_port *dp, struct net_device *hsr);

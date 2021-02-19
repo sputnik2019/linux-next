@@ -210,9 +210,9 @@ struct otx2_hw {
 	u64			cgx_fec_uncorr_blks;
 	u8			cgx_links;  /* No. of CGX links present in HW */
 	u8			lbk_links;  /* No. of LBK links present in HW */
-#define HW_TSO			BIT_ULL(0)
-#define CN10K_MBOX		BIT_ULL(1)
-#define CN10K_LMTST		BIT_ULL(2)
+#define HW_TSO			0
+#define CN10K_MBOX		1
+#define CN10K_LMTST		2
 	unsigned long		cap_flag;
 
 #define LMT_LINE_SIZE		128
@@ -407,6 +407,9 @@ static inline void otx2_setup_dev_hw_settings(struct otx2_nic *pfvf)
 		pfvf->hw.rq_skid = 600;
 		pfvf->qset.rqe_cnt = Q_COUNT(Q_SIZE_1K);
 	}
+	if (is_96xx_B0(pfvf->pdev))
+		__clear_bit(HW_TSO, &hw->cap_flag);
+
 	if (!is_dev_otx2(pfvf->pdev)) {
 		__set_bit(CN10K_MBOX, &hw->cap_flag);
 		__set_bit(CN10K_LMTST, &hw->cap_flag);
