@@ -9,16 +9,16 @@ PCI NTB Function
 PCI Non-Transparent Bridges (NTB) allow two host systems to communicate
 with each other by exposing each host as a device to the other host.
 NTBs typically support the ability to generate interrupts on the remote
-machine, expose memory ranges as BARs and perform DMA.  They also support
-scratchpads which are areas of memory within the NTB that are accessible
+machine, expose memory ranges as BARs, and perform DMA.  They also support
+scratchpads, which are areas of memory within the NTB that are accessible
 from both machines.
 
 PCI NTB Function allows two different systems (or hosts) to communicate
-with each other by configurig the endpoint instances in such a way that
+with each other by configuring the endpoint instances in such a way that
 transactions from one system are routed to the other system.
 
 In the below diagram, PCI NTB function configures the SoC with multiple
-PCIe Endpoint (EP) instances in such a way that transactions from one EP
+PCI Endpoint (EP) instances in such a way that transactions from one EP
 controller are routed to the other EP controller. Once PCI NTB function
 configures the SoC with multiple EP instances, HOST1 and HOST2 can
 communicate with each other using SoC as a bridge.
@@ -112,7 +112,7 @@ The format of Config Region is given below. All the fields here are 32 bits.
 
 	  CMD_CONFIGURE_DOORBELL (0x1): Command to configure doorbell. Before
 	invoking this command, the host should allocate and initialize
-	MSI/MSI-X vectors (i.e., initialize the MSI/MSI-X capability in the
+	MSI/MSI-X vectors (i.e., initialize the MSI/MSI-X Capability in the
 	Endpoint). The endpoint on receiving this command will configure
 	the outbound ATU such that transactions to Doorbell BAR will be routed
 	to the MSI/MSI-X address programmed by the host. The ARGUMENT
@@ -126,12 +126,12 @@ The format of Config Region is given below. All the fields here are 32 bits.
 	the SIZE register and the memory window index should be programmed
 	in the ARGUMENT register. The endpoint on receiving this command
 	will configure the outbound ATU such that transactions to MW BAR
-	is routed to the address provided by the host.
+	are routed to the address provided by the host.
 
 	  CMD_LINK_UP (0x3): Command to indicate an NTB application is
 	bound to the EP device on the host side. Once the endpoint
 	receives this command from both the hosts, the endpoint will
-	raise an LINK_UP event to both the hosts to indicate the host
+	raise a LINK_UP event to both the hosts to indicate the host
 	NTB applications can start communicating with each other.
 
   ARGUMENT:
@@ -175,25 +175,25 @@ The format of Config Region is given below. All the fields here are 32 bits.
   DB ENTRY SIZE:
 
 	Used to determine the offset within the DB BAR that should be written
-	in order to raise doorbell. EPF NTB can use either MSI/MSI-X to
+	in order to raise doorbell. EPF NTB can use either MSI or MSI-X to
 	ring doorbell (MSI-X support will be added later). MSI uses same
 	address for all the interrupts and MSI-X can provide different
 	addresses for different interrupts. The MSI/MSI-X address is provided
 	by the host and the address it gives is based on the MSI/MSI-X
 	implementation supported by the host. For instance, ARM platform
-	using GIC ITS will have same MSI-X address for all the interrupts.
+	using GIC ITS will have the same MSI-X address for all the interrupts.
 	In order to support all the combinations and use the same mechanism
-	for both MSI and MSI-X, EPF NTB allocates separate region in the
+	for both MSI and MSI-X, EPF NTB allocates a separate region in the
 	Outbound Address Space for each of the interrupts. This region will
 	be mapped to the MSI/MSI-X address provided by the host. If a host
 	provides the same address for all the interrupts, all the regions
 	will be translated to the same address. If a host provides different
-	address, the regions will be translated to different address. This
+	addresses, the regions will be translated to different addresses. This
 	will ensure there is no difference while raising the doorbell.
 
   DB DATA:
 
-	EPF NTB supports 32 interrupts. So there are 32 DB DATA registers.
+	EPF NTB supports 32 interrupts, so there are 32 DB DATA registers.
 	This holds the MSI/MSI-X data that has to be written to MSI address
 	for raising doorbell interrupt. This will be populated by EPF NTB
 	while invoking CMD_CONFIGURE_DOORBELL.
@@ -227,11 +227,11 @@ Modeling Constructs:
 There are 5 or more distinct regions (config, self scratchpad, peer
 scratchpad, doorbell, one or more memory windows) to be modeled to achieve
 NTB functionality. At least one memory window is required while more than
-one is permitted. All these regions should be mapped to BAR for hosts to
+one is permitted. All these regions should be mapped to BARs for hosts to
 access these regions.
 
 If one 32-bit BAR is allocated for each of these regions, the scheme would
-look like
+look like this:
 
 ======  ===============
 BAR NO  CONSTRUCTS USED
@@ -246,14 +246,14 @@ BAR5    Memory Window 2
 
 However if we allocate a separate BAR for each of the regions, there would not
 be enough BARs for all the regions in a platform that supports only 64-bit
-BAR.
+BARs.
 
 In order to be supported by most of the platforms, the regions should be
 packed and mapped to BARs in a way that provides NTB functionality and
-also making sure the hosts doesn't access any region that it is not supposed
+also makes sure the host doesn't access any region that it is not supposed
 to.
 
-The following scheme is used in EPF NTB Function
+The following scheme is used in EPF NTB Function:
 
 ======  ===============================
 BAR NO  CONSTRUCTS USED
@@ -293,7 +293,7 @@ EP controller 1) allocated in local memory. The HOST1 can access the config
 region and scratchpad region (self scratchpad) using BAR0 of EP controller 1.
 The peer host (HOST2 connected to EP controller 2) can also access this
 scratchpad region (peer scratchpad) using BAR1 of EP controller 2. This
-diagram shows the case where Config region and Scratchpad region is allocated
+diagram shows the case where Config region and Scratchpad regions are allocated
 for HOST1, however the same is applicable for HOST2.
 
 Modeling Doorbell/Memory Window 1:
