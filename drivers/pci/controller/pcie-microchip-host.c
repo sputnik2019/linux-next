@@ -5,7 +5,6 @@
  * Copyright (c) 2018 - 2020 Microchip Corporation. All rights reserved.
  *
  * Author: Daire McNamara <daire.mcnamara@microchip.com>
- *
  */
 
 #include <linux/clk.h>
@@ -305,21 +304,21 @@ static const struct cause event_cause[NUM_EVENTS] = {
 struct event_map pcie_event_to_event[] = {
 	PCIE_EVENT_TO_EVENT_MAP(L2_EXIT),
 	PCIE_EVENT_TO_EVENT_MAP(HOTRST_EXIT),
-	PCIE_EVENT_TO_EVENT_MAP(DLUP_EXIT)
+	PCIE_EVENT_TO_EVENT_MAP(DLUP_EXIT),
 };
 
 struct event_map sec_error_to_event[] = {
 	SEC_ERROR_TO_EVENT_MAP(TX_RAM_SEC_ERR),
 	SEC_ERROR_TO_EVENT_MAP(RX_RAM_SEC_ERR),
 	SEC_ERROR_TO_EVENT_MAP(PCIE2AXI_RAM_SEC_ERR),
-	SEC_ERROR_TO_EVENT_MAP(AXI2PCIE_RAM_SEC_ERR)
+	SEC_ERROR_TO_EVENT_MAP(AXI2PCIE_RAM_SEC_ERR),
 };
 
 struct event_map ded_error_to_event[] = {
 	DED_ERROR_TO_EVENT_MAP(TX_RAM_DED_ERR),
 	DED_ERROR_TO_EVENT_MAP(RX_RAM_DED_ERR),
 	DED_ERROR_TO_EVENT_MAP(PCIE2AXI_RAM_DED_ERR),
-	DED_ERROR_TO_EVENT_MAP(AXI2PCIE_RAM_DED_ERR)
+	DED_ERROR_TO_EVENT_MAP(AXI2PCIE_RAM_DED_ERR),
 };
 
 struct event_map local_status_to_event[] = {
@@ -378,7 +377,7 @@ struct {
 	{ LOCAL_EVENT(PM_MSI_INT_MSI) },
 	{ LOCAL_EVENT(PM_MSI_INT_AER_EVT) },
 	{ LOCAL_EVENT(PM_MSI_INT_EVENTS) },
-	{ LOCAL_EVENT(PM_MSI_INT_SYS_ERR) }
+	{ LOCAL_EVENT(PM_MSI_INT_SYS_ERR) },
 };
 
 static char poss_clks[][5] = { "fic0", "fic1", "fic2", "fic3" };
@@ -398,8 +397,10 @@ static void mc_pcie_enable_msi(struct mc_port *port, void __iomem *base)
 
 	writew_relaxed(msg_ctrl, base + cap_offset + PCI_MSI_FLAGS);
 
-	writel_relaxed(lower_32_bits(msi->vector_phy), base + cap_offset + PCI_MSI_ADDRESS_LO);
-	writel_relaxed(upper_32_bits(msi->vector_phy), base + cap_offset + PCI_MSI_ADDRESS_HI);
+	writel_relaxed(lower_32_bits(msi->vector_phy),
+		       base + cap_offset + PCI_MSI_ADDRESS_LO);
+	writel_relaxed(upper_32_bits(msi->vector_phy),
+		       base + cap_offset + PCI_MSI_ADDRESS_HI);
 }
 
 static void mc_handle_msi(struct irq_desc *desc)
@@ -407,7 +408,8 @@ static void mc_handle_msi(struct irq_desc *desc)
 	struct mc_port *port = irq_desc_get_handler_data(desc);
 	struct device *dev = port->dev;
 	struct mc_msi *msi = &port->msi;
-	void __iomem *bridge_base_addr = port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
+	void __iomem *bridge_base_addr =
+		port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
 	unsigned long status;
 	u32 bit;
 	u32 virq;
@@ -420,7 +422,8 @@ static void mc_handle_msi(struct irq_desc *desc)
 			if (virq)
 				generic_handle_irq(virq);
 			else
-				dev_err_ratelimited(dev, "bad MSI IRQ %d\n", bit);
+				dev_err_ratelimited(dev, "bad MSI IRQ %d\n",
+						    bit);
 		}
 	}
 }
@@ -428,14 +431,16 @@ static void mc_handle_msi(struct irq_desc *desc)
 static void mc_msi_bottom_irq_ack(struct irq_data *data)
 {
 	struct mc_port *port = irq_data_get_irq_chip_data(data);
-	void __iomem *bridge_base_addr = port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
+	void __iomem *bridge_base_addr =
+		port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
 	u32 bitpos = data->hwirq;
 	unsigned long status;
 
 	writel_relaxed(BIT(bitpos), bridge_base_addr + ISTATUS_MSI);
 	status = readl_relaxed(bridge_base_addr + ISTATUS_MSI);
 	if (!status)
-		writel_relaxed(BIT(PM_MSI_INT_MSI_SHIFT), bridge_base_addr + ISTATUS_LOCAL);
+		writel_relaxed(BIT(PM_MSI_INT_MSI_SHIFT),
+			       bridge_base_addr + ISTATUS_LOCAL);
 }
 
 static void mc_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
@@ -447,11 +452,12 @@ static void mc_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	msg->address_hi = upper_32_bits(addr);
 	msg->data = data->hwirq;
 
-	dev_dbg(port->dev, "msi#%x address_hi %#x address_lo %#x\n", (int)data->hwirq,
-		msg->address_hi, msg->address_lo);
+	dev_dbg(port->dev, "msi#%x address_hi %#x address_lo %#x\n",
+		(int)data->hwirq, msg->address_hi, msg->address_lo);
 }
 
-static int mc_msi_set_affinity(struct irq_data *irq_data, const struct cpumask *mask, bool force)
+static int mc_msi_set_affinity(struct irq_data *irq_data,
+			       const struct cpumask *mask, bool force)
 {
 	return -EINVAL;
 }
@@ -468,7 +474,8 @@ static int mc_irq_msi_domain_alloc(struct irq_domain *domain, unsigned int virq,
 {
 	struct mc_port *port = domain->host_data;
 	struct mc_msi *msi = &port->msi;
-	void __iomem *bridge_base_addr = port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
+	void __iomem *bridge_base_addr =
+		port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
 	unsigned long bit;
 	u32 val;
 
@@ -481,8 +488,8 @@ static int mc_irq_msi_domain_alloc(struct irq_domain *domain, unsigned int virq,
 
 	set_bit(bit, msi->used);
 
-	irq_domain_set_info(domain, virq, bit, &mc_msi_bottom_irq_chip, domain->host_data,
-			    handle_edge_irq, NULL, NULL);
+	irq_domain_set_info(domain, virq, bit, &mc_msi_bottom_irq_chip,
+			    domain->host_data, handle_edge_irq, NULL, NULL);
 
 	/* Enable MSI interrupts */
 	val = readl_relaxed(bridge_base_addr + IMASK_LOCAL);
@@ -524,7 +531,8 @@ static struct irq_chip mc_msi_irq_chip = {
 };
 
 static struct msi_domain_info mc_msi_domain_info = {
-	.flags = (MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS | MSI_FLAG_PCI_MSIX),
+	.flags = (MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS |
+		  MSI_FLAG_PCI_MSIX),
 	.chip = &mc_msi_irq_chip,
 };
 
@@ -536,13 +544,15 @@ static int mc_allocate_msi_domains(struct mc_port *port)
 
 	mutex_init(&port->msi.lock);
 
-	msi->dev_domain = irq_domain_add_linear(NULL, msi->num_vectors, &msi_domain_ops, port);
+	msi->dev_domain = irq_domain_add_linear(NULL, msi->num_vectors,
+						&msi_domain_ops, port);
 	if (!msi->dev_domain) {
 		dev_err(dev, "failed to create IRQ domain\n");
 		return -ENOMEM;
 	}
 
-	msi->msi_domain = pci_msi_create_irq_domain(fwnode, &mc_msi_domain_info, msi->dev_domain);
+	msi->msi_domain = pci_msi_create_irq_domain(fwnode, &mc_msi_domain_info,
+						    msi->dev_domain);
 	if (!msi->msi_domain) {
 		dev_err(dev, "failed to create MSI domain\n");
 		irq_domain_remove(msi->dev_domain);
@@ -556,7 +566,8 @@ static void mc_handle_intx(struct irq_desc *desc)
 {
 	struct mc_port *port = irq_desc_get_handler_data(desc);
 	struct device *dev = port->dev;
-	void __iomem *bridge_base_addr = port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
+	void __iomem *bridge_base_addr =
+		port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
 	unsigned long status;
 	u32 bit;
 	u32 virq;
@@ -570,7 +581,8 @@ static void mc_handle_intx(struct irq_desc *desc)
 			if (virq)
 				generic_handle_irq(virq);
 			else
-				dev_err_ratelimited(dev, "bad INTx IRQ %d\n", bit);
+				dev_err_ratelimited(dev, "bad INTx IRQ %d\n",
+						    bit);
 		}
 	}
 }
@@ -578,7 +590,8 @@ static void mc_handle_intx(struct irq_desc *desc)
 static void mc_ack_intx_irq(struct irq_data *data)
 {
 	struct mc_port *port = irq_data_get_irq_chip_data(data);
-	void __iomem *bridge_base_addr = port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
+	void __iomem *bridge_base_addr =
+		port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
 	u32 mask = BIT(data->hwirq + PM_MSI_INT_INTX_SHIFT);
 
 	writel_relaxed(mask, bridge_base_addr + ISTATUS_LOCAL);
@@ -587,7 +600,8 @@ static void mc_ack_intx_irq(struct irq_data *data)
 static void mc_mask_intx_irq(struct irq_data *data)
 {
 	struct mc_port *port = irq_data_get_irq_chip_data(data);
-	void __iomem *bridge_base_addr = port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
+	void __iomem *bridge_base_addr =
+		port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
 	unsigned long flags;
 	u32 mask = BIT(data->hwirq + PM_MSI_INT_INTX_SHIFT);
 	u32 val;
@@ -602,7 +616,8 @@ static void mc_mask_intx_irq(struct irq_data *data)
 static void mc_unmask_intx_irq(struct irq_data *data)
 {
 	struct mc_port *port = irq_data_get_irq_chip_data(data);
-	void __iomem *bridge_base_addr = port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
+	void __iomem *bridge_base_addr =
+		port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
 	unsigned long flags;
 	u32 mask = BIT(data->hwirq + PM_MSI_INT_INTX_SHIFT);
 	u32 val;
@@ -636,11 +651,7 @@ static const struct irq_domain_ops intx_domain_ops = {
 
 static inline u32 reg_to_event(u32 reg, struct event_map field)
 {
-	u32 val;
-
-	val = (reg & field.reg_mask) ? BIT(field.event_bit) : 0;
-
-	return val;
+	return (reg & field.reg_mask) ? BIT(field.event_bit) : 0;
 }
 
 static u32 pcie_events(void __iomem *addr)
@@ -693,7 +704,8 @@ static u32 local_events(void __iomem *addr)
 
 static u32 get_events(struct mc_port *port)
 {
-	void __iomem *bridge_base_addr = port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
+	void __iomem *bridge_base_addr =
+		port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
 	void __iomem *ctrl_base_addr = port->axi_base_addr + MC_PCIE_CTRL_ADDR;
 	u32 events = 0;
 
@@ -745,7 +757,8 @@ static void mc_ack_event_irq(struct irq_data *data)
 	void __iomem *addr;
 	u32 mask;
 
-	addr = port->axi_base_addr + event_descs[event].base + event_descs[event].offset;
+	addr = port->axi_base_addr + event_descs[event].base +
+		event_descs[event].offset;
 	mask = event_descs[event].mask;
 	mask |= event_descs[event].enb_mask;
 
@@ -760,7 +773,8 @@ static void mc_mask_event_irq(struct irq_data *data)
 	u32 mask;
 	u32 val;
 
-	addr = port->axi_base_addr + event_descs[event].base + event_descs[event].mask_offset;
+	addr = port->axi_base_addr + event_descs[event].base +
+		event_descs[event].mask_offset;
 	mask = event_descs[event].mask;
 	if (event_descs[event].enb_mask) {
 		mask <<= PCIE_EVENT_INT_ENB_SHIFT;
@@ -789,7 +803,8 @@ static void mc_unmask_event_irq(struct irq_data *data)
 	u32 mask;
 	u32 val;
 
-	addr = port->axi_base_addr + event_descs[event].base + event_descs[event].mask_offset;
+	addr = port->axi_base_addr + event_descs[event].base +
+		event_descs[event].mask_offset;
 	mask = event_descs[event].mask;
 
 	if (event_descs[event].enb_mask)
@@ -846,20 +861,20 @@ static inline struct clk *mc_pcie_init_clk(struct device *dev, const char *id)
 	if (ret)
 		return ERR_PTR(ret);
 
-	devm_add_action_or_reset(dev, (void (*) (void *))clk_disable_unprepare, clk);
+	devm_add_action_or_reset(dev, (void (*) (void *))clk_disable_unprepare,
+				 clk);
 
 	return clk;
 }
 
 static int mc_pcie_init_clks(struct device *dev)
 {
-	struct clk *fic;
 	int i;
+	struct clk *fic;
 
 	/*
-	 * PCIe may be clocked via Fabric Interface
-	 * using between 1 and 4 clocks. Scan DT for
-	 * clocks and enable them if present
+	 * PCIe may be clocked via Fabric Interface using between 1 and 4
+	 * clocks. Scan DT for clocks and enable them if present
 	 */
 	for (i = 0; i < ARRAY_SIZE(poss_clks); i++) {
 		fic = mc_pcie_init_clk(dev, poss_clks[i]);
@@ -883,8 +898,8 @@ static int mc_pcie_init_irq_domains(struct mc_port *port)
 		return -EINVAL;
 	}
 
-	port->event_domain = irq_domain_add_linear(pcie_intc_node, NUM_EVENTS, &event_domain_ops,
-						   port);
+	port->event_domain = irq_domain_add_linear(pcie_intc_node, NUM_EVENTS,
+						   &event_domain_ops, port);
 	if (!port->event_domain) {
 		dev_err(dev, "failed to get event domain\n");
 		return -ENOMEM;
@@ -892,8 +907,8 @@ static int mc_pcie_init_irq_domains(struct mc_port *port)
 
 	irq_domain_update_bus_token(port->event_domain, DOMAIN_BUS_NEXUS);
 
-	port->intx_domain = irq_domain_add_linear(pcie_intc_node, PCI_NUM_INTX, &intx_domain_ops,
-						  port);
+	port->intx_domain = irq_domain_add_linear(pcie_intc_node, PCI_NUM_INTX,
+						  &intx_domain_ops, port);
 	if (!port->intx_domain) {
 		dev_err(dev, "failed to get an INTx IRQ domain\n");
 		return -ENOMEM;
@@ -907,8 +922,9 @@ static int mc_pcie_init_irq_domains(struct mc_port *port)
 	return mc_allocate_msi_domains(port);
 }
 
-static void mc_pcie_setup_window(void __iomem *bridge_base_addr, u32 index, phys_addr_t axi_addr,
-				 phys_addr_t pci_addr, size_t size)
+static void mc_pcie_setup_window(void __iomem *bridge_base_addr, u32 index,
+				 phys_addr_t axi_addr, phys_addr_t pci_addr,
+				 size_t size)
 {
 	u32 atr_sz = ilog2(size) - 1;
 	u32 val;
@@ -918,9 +934,11 @@ static void mc_pcie_setup_window(void __iomem *bridge_base_addr, u32 index, phys
 	else
 		val = PCIE_TX_RX_INTERFACE;
 
-	writel(val, bridge_base_addr + (index * ATR_ENTRY_SIZE) + ATR0_AXI4_SLV0_TRSL_PARAM);
+	writel(val, bridge_base_addr + (index * ATR_ENTRY_SIZE) +
+	       ATR0_AXI4_SLV0_TRSL_PARAM);
 
-	val = lower_32_bits(axi_addr) | (atr_sz << ATR_SIZE_SHIFT) | ATR_IMPL_ENABLE;
+	val = lower_32_bits(axi_addr) | (atr_sz << ATR_SIZE_SHIFT) |
+			    ATR_IMPL_ENABLE;
 	writel(val, bridge_base_addr + (index * ATR_ENTRY_SIZE) +
 	       ATR0_AXI4_SLV0_SRCADDR_PARAM);
 
@@ -942,9 +960,11 @@ static void mc_pcie_setup_window(void __iomem *bridge_base_addr, u32 index, phys
 	writel(0, bridge_base_addr + ATR0_PCIE_WIN0_SRC_ADDR);
 }
 
-static int mc_pcie_setup_windows(struct platform_device *pdev, struct mc_port *port)
+static int mc_pcie_setup_windows(struct platform_device *pdev,
+				 struct mc_port *port)
 {
-	void __iomem *bridge_base_addr = port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
+	void __iomem *bridge_base_addr =
+		port->axi_base_addr + MC_PCIE_BRIDGE_ADDR;
 	struct pci_host_bridge *bridge = platform_get_drvdata(pdev);
 	struct resource_entry *entry;
 	u64 pci_addr;
@@ -953,8 +973,9 @@ static int mc_pcie_setup_windows(struct platform_device *pdev, struct mc_port *p
 	resource_list_for_each_entry(entry, &bridge->windows) {
 		if (resource_type(entry->res) == IORESOURCE_MEM) {
 			pci_addr = entry->res->start - entry->offset;
-			mc_pcie_setup_window(bridge_base_addr, index, entry->res->start,
-					     pci_addr, resource_size(entry->res));
+			mc_pcie_setup_window(bridge_base_addr, index,
+					     entry->res->start, pci_addr,
+					     resource_size(entry->res));
 			index++;
 		}
 	}
@@ -1010,7 +1031,7 @@ static int mc_platform_init(struct pci_config_window *cfg)
 	for (i = 0; i < NUM_EVENTS; i++) {
 		event_irq = irq_create_mapping(port->event_domain, i);
 		if (!event_irq) {
-			dev_err(dev, "failed to map interrupt\n");
+			dev_err(dev, "failed to map hwirq %d\n", i);
 			return -ENXIO;
 		}
 
@@ -1022,7 +1043,8 @@ static int mc_platform_init(struct pci_config_window *cfg)
 		}
 	}
 
-	intx_irq = irq_create_mapping(port->event_domain, EVENT_LOCAL_PM_MSI_INT_INTX);
+	intx_irq = irq_create_mapping(port->event_domain,
+				      EVENT_LOCAL_PM_MSI_INT_INTX);
 	if (!intx_irq) {
 		dev_err(dev, "failed to map INTx interrupt\n");
 		return -ENXIO;
@@ -1031,7 +1053,8 @@ static int mc_platform_init(struct pci_config_window *cfg)
 	/* Plug the INTx chained handler */
 	irq_set_chained_handler_and_data(intx_irq, mc_handle_intx, port);
 
-	msi_irq = irq_create_mapping(port->event_domain, EVENT_LOCAL_PM_MSI_INT_MSI);
+	msi_irq = irq_create_mapping(port->event_domain,
+				     EVENT_LOCAL_PM_MSI_INT_MSI);
 	if (!msi_irq)
 		return -ENXIO;
 
@@ -1050,18 +1073,23 @@ static int mc_platform_init(struct pci_config_window *cfg)
 
 	writel_relaxed(val, ctrl_base_addr + ECC_CONTROL);
 
-	val = PCIE_EVENT_INT_L2_EXIT_INT | PCIE_EVENT_INT_HOTRST_EXIT_INT |
+	val = PCIE_EVENT_INT_L2_EXIT_INT |
+	      PCIE_EVENT_INT_HOTRST_EXIT_INT |
 	      PCIE_EVENT_INT_DLUP_EXIT_INT;
 	writel_relaxed(val, ctrl_base_addr + PCIE_EVENT_INT);
 
-	val = SEC_ERROR_INT_TX_RAM_SEC_ERR_INT | SEC_ERROR_INT_RX_RAM_SEC_ERR_INT |
-	      SEC_ERROR_INT_PCIE2AXI_RAM_SEC_ERR_INT | SEC_ERROR_INT_AXI2PCIE_RAM_SEC_ERR_INT;
+	val = SEC_ERROR_INT_TX_RAM_SEC_ERR_INT |
+	      SEC_ERROR_INT_RX_RAM_SEC_ERR_INT |
+	      SEC_ERROR_INT_PCIE2AXI_RAM_SEC_ERR_INT |
+	      SEC_ERROR_INT_AXI2PCIE_RAM_SEC_ERR_INT;
 	writel_relaxed(val, ctrl_base_addr + SEC_ERROR_INT);
 	writel_relaxed(0, ctrl_base_addr + SEC_ERROR_INT_MASK);
 	writel_relaxed(0, ctrl_base_addr + SEC_ERROR_CNT);
 
-	val = DED_ERROR_INT_TX_RAM_DED_ERR_INT | DED_ERROR_INT_RX_RAM_DED_ERR_INT |
-	      DED_ERROR_INT_PCIE2AXI_RAM_DED_ERR_INT | DED_ERROR_INT_AXI2PCIE_RAM_DED_ERR_INT;
+	val = DED_ERROR_INT_TX_RAM_DED_ERR_INT |
+	      DED_ERROR_INT_RX_RAM_DED_ERR_INT |
+	      DED_ERROR_INT_PCIE2AXI_RAM_DED_ERR_INT |
+	      DED_ERROR_INT_AXI2PCIE_RAM_DED_ERR_INT;
 	writel_relaxed(val, ctrl_base_addr + DED_ERROR_INT);
 	writel_relaxed(0, ctrl_base_addr + DED_ERROR_INT_MASK);
 	writel_relaxed(0, ctrl_base_addr + DED_ERROR_CNT);
@@ -1070,8 +1098,8 @@ static int mc_platform_init(struct pci_config_window *cfg)
 	writel_relaxed(GENMASK(31, 0), bridge_base_addr + ISTATUS_HOST);
 
 	/* Configure Address Translation Table 0 for PCIe config space */
-	mc_pcie_setup_window(bridge_base_addr, 0, cfg->res.start & 0xffffffff, cfg->res.start,
-			     resource_size(&cfg->res));
+	mc_pcie_setup_window(bridge_base_addr, 0, cfg->res.start & 0xffffffff,
+			     cfg->res.start, resource_size(&cfg->res));
 
 	return mc_pcie_setup_windows(pdev, port);
 }
