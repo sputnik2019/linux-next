@@ -23,13 +23,13 @@ are required.
 
 To find the list of endpoint controller devices in the system::
 
-        # ls /sys/class/pci_epc/
-          2900000.pcie-ep  2910000.pcie-ep
+	# ls /sys/class/pci_epc/
+	2900000.pcie-ep  2910000.pcie-ep
 
 If PCI_ENDPOINT_CONFIGFS is enabled::
 
 	# ls /sys/kernel/config/pci_ep/controllers
-	  2900000.pcie-ep  2910000.pcie-ep
+	2900000.pcie-ep  2910000.pcie-ep
 
 
 Endpoint Function Drivers
@@ -38,12 +38,12 @@ Endpoint Function Drivers
 To find the list of endpoint function drivers in the system::
 
 	# ls /sys/bus/pci-epf/drivers
-	  pci_epf_ntb   pci_epf_ntb
+	pci_epf_ntb   pci_epf_ntb
 
 If PCI_ENDPOINT_CONFIGFS is enabled::
 
 	# ls /sys/kernel/config/pci_ep/functions
-	  pci_epf_ntb   pci_epf_ntb
+	pci_epf_ntb   pci_epf_ntb
 
 
 Creating pci-epf-ntb Device
@@ -63,19 +63,19 @@ The PCI endpoint framework populates the directory with the following
 configurable fields::
 
 	# ls functions/pci_epf_ntb/func1
-          baseclass_code    deviceid          msi_interrupts    pci-epf-ntb.0
-          progif_code       secondary         subsys_id         vendorid
-          cache_line_size   interrupt_pin     msix_interrupts   primary
-          revid             subclass_code     subsys_vendor_id
+	baseclass_code    deviceid          msi_interrupts    pci-epf-ntb.0
+	progif_code       secondary         subsys_id         vendorid
+	cache_line_size   interrupt_pin     msix_interrupts   primary
+	revid             subclass_code     subsys_vendor_id
 
 The PCI endpoint function driver populates these entries with default values
 when the device is bound to the driver. The pci-epf-ntb driver populates
 vendorid with 0xffff and interrupt_pin with 0x0001::
 
 	# cat functions/pci_epf_ntb/func1/vendorid
-	  0xffff
+	0xffff
 	# cat functions/pci_epf_ntb/func1/interrupt_pin
-	  0x0001
+	0x0001
 
 
 Configuring pci-epf-ntb Device
@@ -97,8 +97,8 @@ The NTB function driver will populate this directory with various attributes
 that can be configured by the user::
 
 	# ls functions/pci_epf_ntb/func1/pci_epf_ntb.0/
-          db_count    mw1         mw2         mw3         mw4         num_mws
-          spad_count
+	db_count    mw1         mw2         mw3         mw4         num_mws
+	spad_count
 
 A sample configuration for NTB function is given below::
 
@@ -111,14 +111,14 @@ A sample configuration for NTB function is given below::
 Binding pci-epf-ntb Device to EP Controller
 --------------------------------------------
 
-NTB function device should be attached to two PCIe endpoint controllers
+NTB function device should be attached to two PCI endpoint controllers
 connected to the two hosts. Use the 'primary' and 'secondary' entries
-inside NTB function device to attach one PCIe endpoint controller to
-primary interface and the other PCIe endpoint controller to the secondary
-interface. ::
+inside NTB function device to attach one PCI endpoint controller to
+primary interface and the other PCI endpoint controller to the secondary
+interface::
 
-        # ln -s controllers/2900000.pcie-ep/ functions/pci-epf-ntb/func1/primary
-        # ln -s controllers/2910000.pcie-ep/ functions/pci-epf-ntb/func1/secondary
+	# ln -s controllers/2900000.pcie-ep/ functions/pci-epf-ntb/func1/primary
+	# ln -s controllers/2910000.pcie-ep/ functions/pci-epf-ntb/func1/secondary
 
 Once the above step is completed, both the PCI endpoint controllers are ready to
 establish a link with the host.
@@ -128,11 +128,11 @@ Start the Link
 --------------
 
 In order for the endpoint device to establish a link with the host, the _start_
-field should be populated with '1'. For NTB, both the PCIe endpoint controllers
+field should be populated with '1'. For NTB, both the PCI endpoint controllers
 should establish link with the host::
 
-        #echo 1 > controllers/2900000.pcie-ep/start
-        #echo 1 > controllers/2910000.pcie-ep/start
+	# echo 1 > controllers/2900000.pcie-ep/start
+	# echo 1 > controllers/2910000.pcie-ep/start
 
 
 RootComplex Device
@@ -144,9 +144,9 @@ lspci Output
 Note that the devices listed here correspond to the values populated in
 "Creating pci-epf-ntb Device" section above::
 
-        # lspci
-        0000:00:00.0 PCI bridge: Texas Instruments Device b00d
-        0000:01:00.0 RAM memory: Texas Instruments Device b00d
+	# lspci
+	0000:00:00.0 PCI bridge: Texas Instruments Device b00d
+	0000:01:00.0 RAM memory: Texas Instruments Device b00d
 
 
 Using ntb_hw_epf Device
