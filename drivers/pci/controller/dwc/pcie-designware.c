@@ -228,17 +228,18 @@ static void dw_pcie_writel_ob_unroll(struct dw_pcie *pci, u32 index, u32 reg,
 static inline u32 dw_pcie_enable_ecrc(u32 val)
 {
 	/*
-	 * DesignWare core version 4.90A has this strange design issue
-	 * where the 'TD' bit in the Control register-1 of the ATU outbound
-	 * region acts like an override for the ECRC setting i.e. the presence
-	 * of TLP Digest(ECRC) in the outgoing TLPs is solely determined by
-	 * this bit. This is contrary to the PCIe spec which says that the
-	 * enablement of the ECRC is solely determined by the AER registers.
+	 * DesignWare core version 4.90A has a design issue where the 'TD'
+	 * bit in the Control register-1 of the ATU outbound region acts
+	 * like an override for the ECRC setting, i.e., the presence of TLP
+	 * Digest (ECRC) in the outgoing TLPs is solely determined by this
+	 * bit. This is contrary to the PCIe spec which says that the
+	 * enablement of the ECRC is solely determined by the AER
+	 * registers.
 	 *
 	 * Because of this, even when the ECRC is enabled through AER
-	 * registers, the transactions going through ATU won't have TLP Digest
-	 * as there is no way the AER sub-system could program the TD bit which
-	 * is specific to DesignWare core.
+	 * registers, the transactions going through ATU won't have TLP
+	 * Digest as there is no way the PCI core AER code could program
+	 * the TD bit which is specific to the DesignWare core.
 	 *
 	 * The best way to handle this scenario is to program the TD bit
 	 * always. It affects only the traffic from root port to downstream
