@@ -1963,7 +1963,7 @@ char *format_page_flags(char *buf, char *end, unsigned long flags)
 			buf++;
 		}
 
-		buf = string(buf, end, pff[i].name, *pff[i].spec);
+		buf = string(buf, end, pff[i].name, default_str_spec);
 		if (buf < end)
 			*buf = '=';
 		buf++;
