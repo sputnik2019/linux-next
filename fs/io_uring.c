@@ -339,6 +339,7 @@ struct io_ring_ctx {
 		unsigned int		eventfd_async: 1;
 		unsigned int		restricted: 1;
 		unsigned int		sqo_dead: 1;
+		unsigned int		sqo_exec: 1;
 
 		/*
 		 * Ring buffer of indices into array of io_uring_sqe, which is
@@ -2009,7 +2010,7 @@ static void __io_req_task_submit(struct io_kiocb *req)
 
 	/* ctx stays valid until unlock, even if we drop all ours ctx->refs */
 	mutex_lock(&ctx->uring_lock);
-	if (!ctx->sqo_dead && !(current->flags & PF_EXITING))
+	if (!ctx->sqo_dead && !(current->flags & PF_EXITING) && !current->in_execve)
 		__io_queue_sqe(req);
 	else
 		__io_req_task_cancel(req, -EFAULT);
@@ -6788,6 +6789,10 @@ static int io_sq_thread(void *data)
 	complete_all(&sqd->completion);
 	mutex_lock(&sqd->lock);
 	sqd->thread = NULL;
+	list_for_each_entry(ctx, &sqd->ctx_list, sqd_list) {
+		ctx->sqo_exec = 1;
+		io_ring_set_wakeup_flag(ctx);
+	}
 	mutex_unlock(&sqd->lock);
 
 	complete(&sqd->exited);
@@ -7135,6 +7140,7 @@ static void io_sq_thread_finish(struct io_ring_ctx *ctx)
 	struct io_sq_data *sqd = ctx->sq_data;
 
 	if (sqd) {
+		complete(&sqd->startup);
 		if (sqd->thread) {
 			wait_for_completion(&ctx->sq_thread_comp);
 			io_sq_thread_park(sqd);
@@ -7833,6 +7839,25 @@ void __io_uring_free(struct task_struct *tsk)
 	tsk->io_uring = NULL;
 }
 
+static int io_sq_thread_fork(struct io_sq_data *sqd, struct io_ring_ctx *ctx)
+{
+	int ret;
+
+	clear_bit(IO_SQ_THREAD_SHOULD_STOP, &sqd->state);
+	reinit_completion(&sqd->completion);
+	ctx->sqo_dead = ctx->sqo_exec = 0;
+	sqd->task_pid = current->pid;
+	current->flags |= PF_IO_WORKER;
+	ret = io_wq_fork_thread(io_sq_thread, sqd);
+	current->flags &= ~PF_IO_WORKER;
+	if (ret < 0) {
+		sqd->thread = NULL;
+		return ret;
+	}
+	wait_for_completion(&sqd->completion);
+	return io_uring_alloc_task_context(sqd->thread, ctx);
+}
+
 static int io_sq_offload_create(struct io_ring_ctx *ctx,
 				struct io_uring_params *p)
 {
@@ -7921,7 +7946,7 @@ static void io_sq_offload_start(struct io_ring_ctx *ctx)
 {
 	struct io_sq_data *sqd = ctx->sq_data;
 
-	if ((ctx->flags & IORING_SETUP_SQPOLL) && sqd->thread)
+	if (ctx->flags & IORING_SETUP_SQPOLL)
 		complete(&sqd->startup);
 }
 
@@ -8818,7 +8843,7 @@ void __io_uring_files_cancel(struct files_struct *files)
 	if (files) {
 		io_uring_remove_task_files(tctx);
 		if (tctx->io_wq) {
-			io_wq_destroy(tctx->io_wq);
+			io_wq_put(tctx->io_wq);
 			tctx->io_wq = NULL;
 		}
 	}
@@ -9125,6 +9150,12 @@ SYSCALL_DEFINE6(io_uring_enter, unsigned int, fd, u32, to_submit,
 	if (ctx->flags & IORING_SETUP_SQPOLL) {
 		io_cqring_overflow_flush(ctx, false, NULL, NULL);
 
+		if (unlikely(ctx->sqo_exec)) {
+			ret = io_sq_thread_fork(ctx->sq_data, ctx);
+			if (ret)
+				goto out;
+			ctx->sqo_exec = 0;
+		}
 		ret = -EOWNERDEAD;
 		if (unlikely(ctx->sqo_dead))
 			goto out;
@@ -9226,8 +9257,11 @@ static void __io_uring_show_fdinfo(struct io_ring_ctx *ctx, struct seq_file *m)
 	 */
 	has_lock = mutex_trylock(&ctx->uring_lock);
 
-	if (has_lock && (ctx->flags & IORING_SETUP_SQPOLL))
+	if (has_lock && (ctx->flags & IORING_SETUP_SQPOLL)) {
 		sq = ctx->sq_data;
+		if (!sq->thread)
+			sq = NULL;
+	}
 
 	seq_printf(m, "SqThread:\t%d\n", sq ? task_pid_nr(sq->thread) : -1);
 	seq_printf(m, "SqThreadCpu:\t%d\n", sq ? task_cpu(sq->thread) : -1);
