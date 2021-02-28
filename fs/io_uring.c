@@ -1822,6 +1822,9 @@ static bool __tctx_task_work(struct io_uring_task *tctx)
 
 		req = container_of(node, struct io_kiocb, io_task_work.node);
 		this_ctx = req->ctx;
+		if (this_ctx != ctx)
+			percpu_ref_get(&this_ctx->refs);
+
 		req->task_work.func(&req->task_work);
 		node = next;
 
@@ -1831,14 +1834,18 @@ static bool __tctx_task_work(struct io_uring_task *tctx)
 			mutex_lock(&ctx->uring_lock);
 			io_submit_flush_completions(&ctx->submit_state.comp, ctx);
 			mutex_unlock(&ctx->uring_lock);
+			percpu_ref_put(&ctx->refs);
 			ctx = node ? this_ctx : NULL;
 		}
 	}
 
-	if (ctx && ctx->submit_state.comp.nr) {
-		mutex_lock(&ctx->uring_lock);
-		io_submit_flush_completions(&ctx->submit_state.comp, ctx);
-		mutex_unlock(&ctx->uring_lock);
+	if (ctx) {
+		if (ctx->submit_state.comp.nr) {
+			mutex_lock(&ctx->uring_lock);
+			io_submit_flush_completions(&ctx->submit_state.comp, ctx);
+			mutex_unlock(&ctx->uring_lock);
+		}
+		percpu_ref_put(&ctx->refs);
 	}
 
 	return list.first != NULL;
@@ -8482,15 +8489,11 @@ static int io_remove_personalities(int id, void *p, void *data)
 
 static bool io_run_ctx_fallback(struct io_ring_ctx *ctx)
 {
-	struct callback_head *work, *head, *next;
+	struct callback_head *work, *next;
 	bool executed = false;
 
 	do {
-		do {
-			head = NULL;
-			work = READ_ONCE(ctx->exit_task_work);
-		} while (cmpxchg(&ctx->exit_task_work, work, head) != work);
-
+		work = xchg(&ctx->exit_task_work, NULL);
 		if (!work)
 			break;
 
