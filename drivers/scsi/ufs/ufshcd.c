@@ -7033,6 +7033,8 @@ static int ufshcd_reset_and_restore(struct ufs_hba *hba)
 	spin_unlock_irqrestore(hba->host->host_lock, flags);
 
 	do {
+		hba->ufshcd_state = UFSHCD_STATE_RESET;
+
 		/* Reset the attached device */
 		ufshcd_device_reset(hba);
 
