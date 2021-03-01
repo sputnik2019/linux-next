@@ -869,7 +869,6 @@ static int fsl_xcvr_dai_probe(struct snd_soc_dai *dai)
 	struct fsl_xcvr *xcvr = snd_soc_dai_get_drvdata(dai);
 
 	snd_soc_dai_init_dma_data(dai, &xcvr->dma_prms_tx, &xcvr->dma_prms_rx);
-	snd_soc_dai_set_drvdata(dai, xcvr);
 
 	snd_soc_add_dai_controls(dai, &fsl_xcvr_mode_kctl, 1);
 	snd_soc_add_dai_controls(dai, &fsl_xcvr_arc_mode_kctl, 1);
@@ -1243,10 +1242,6 @@ static __maybe_unused int fsl_xcvr_runtime_suspend(struct device *dev)
 	if (ret < 0)
 		dev_err(dev, "Failed to assert M0+ core: %d\n", ret);
 
-	ret = reset_control_assert(xcvr->reset);
-	if (ret < 0)
-		dev_err(dev, "Failed to assert M0+ reset: %d\n", ret);
-
 	regcache_cache_only(xcvr->regmap, true);
 
 	clk_disable_unprepare(xcvr->spba_clk);
@@ -1261,6 +1256,12 @@ static __maybe_unused int fsl_xcvr_runtime_resume(struct device *dev)
 {
 	struct fsl_xcvr *xcvr = dev_get_drvdata(dev);
 	int ret;
+
+	ret = reset_control_assert(xcvr->reset);
+	if (ret < 0) {
+		dev_err(dev, "Failed to assert M0+ reset: %d\n", ret);
+		return ret;
+	}
 
 	ret = clk_prepare_enable(xcvr->ipg_clk);
 	if (ret) {
