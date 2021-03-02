@@ -1754,9 +1754,8 @@ static enum dc_status enable_link_dp(struct dc_state *state,
 	dp_set_fec_enable(link, fec_enable);
 
 	// during mode set we do DP_SET_POWER off then on, aux writes are lost
-	if (link->dpcd_sink_ext_caps.bits.oled == 1 ||
-		link->dpcd_sink_ext_caps.bits.sdr_aux_backlight_control == 1 ||
-		link->dpcd_sink_ext_caps.bits.hdr_aux_backlight_control == 1) {
+	if (link->dpcd_sink_ext_caps.bits.sdr_aux_backlight_control == 1 ||
+	    link->dpcd_sink_ext_caps.bits.hdr_aux_backlight_control == 1) {
 		dc_link_set_default_brightness_aux(link); // TODO: use cached if known
 		if (link->dpcd_sink_ext_caps.bits.oled == 1)
 			msleep(bl_oled_enable_delay);
