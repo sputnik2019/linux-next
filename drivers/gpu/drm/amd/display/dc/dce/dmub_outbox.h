@@ -1,7 +1,5 @@
 /*
- * Copyright 2008 Advanced Micro Devices, Inc.
- * Copyright 2008 Red Hat Inc.
- * Copyright 2009 Jerome Glisse.
+ * Copyright 2020 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -21,20 +19,15 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  *
+ * Authors: AMD
+ *
  */
 
-/*
- * Debugfs
- */
-struct amdgpu_autodump {
-	struct completion		dumping;
-	struct wait_queue_head		gpu_hang;
-};
+#ifndef _DMUB_OUTBOX_H_
+#define _DMUB_OUTBOX_H_
 
-int amdgpu_debugfs_regs_init(struct amdgpu_device *adev);
-int amdgpu_debugfs_init(struct amdgpu_device *adev);
-void amdgpu_debugfs_fini(struct amdgpu_device *adev);
-void amdgpu_debugfs_fence_init(struct amdgpu_device *adev);
-void amdgpu_debugfs_firmware_init(struct amdgpu_device *adev);
-void amdgpu_debugfs_gem_init(struct amdgpu_device *adev);
-int amdgpu_debugfs_wait_dump(struct amdgpu_device *adev);
+#include "dc.h"
+
+void dmub_enable_outbox_notification(struct dc *dc);
+
+#endif /* _DMUB_OUTBOX_H_ */
