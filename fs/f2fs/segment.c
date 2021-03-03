@@ -504,7 +504,7 @@ void f2fs_balance_fs(struct f2fs_sb_info *sbi, bool need)
 	 */
 	if (has_not_enough_free_secs(sbi, 0, 0)) {
 		down_write(&sbi->gc_lock);
-		f2fs_gc(sbi, false, false, NULL_SEGNO);
+		f2fs_gc(sbi, false, false, false, NULL_SEGNO);
 	}
 }
 
@@ -653,7 +653,11 @@ int f2fs_issue_flush(struct f2fs_sb_info *sbi, nid_t ino)
 
 	llist_add(&cmd.llnode, &fcc->issue_list);
 
-	/* update issue_list before we wake up issue_flush thread */
+	/*
+	 * update issue_list before we wake up issue_flush thread, this
+	 * smp_mb() pairs with another barrier in ___wait_event(), see
+	 * more details in comments of waitqueue_active().
+	 */
 	smp_mb();
 
 	if (waitqueue_active(&fcc->flush_wait_queue))
@@ -1755,6 +1759,8 @@ static int issue_discard_thread(void *data)
 			wait_ms = dpolicy.max_interval;
 			continue;
 		}
+		if (!atomic_read(&dcc->discard_cmd_cnt))
+			continue;
 
 		if (sbi->gc_mode == GC_URGENT_HIGH)
 			__init_discard_policy(sbi, &dpolicy, DPOLICY_FORCE, 1);
