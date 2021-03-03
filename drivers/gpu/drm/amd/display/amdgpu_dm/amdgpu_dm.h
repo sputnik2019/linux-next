@@ -69,18 +69,6 @@ struct common_irq_params {
 };
 
 /**
- * struct irq_list_head - Linked-list for low context IRQ handlers.
- *
- * @head: The list_head within &struct handler_data
- * @work: A work_struct containing the deferred handler work
- */
-struct irq_list_head {
-	struct list_head head;
-	/* In case this interrupt needs post-processing, 'work' will be queued*/
-	struct work_struct work;
-};
-
-/**
  * struct dm_compressor_info - Buffer info used by frame buffer compression
  * @cpu_addr: MMIO cpu addr
  * @bo_ptr: Pointer to the buffer object
@@ -293,7 +281,7 @@ struct amdgpu_display_manager {
 	 * Note that handlers are called in the same order as they were
 	 * registered (FIFO).
 	 */
-	struct irq_list_head irq_handler_list_low_tab[DAL_IRQ_SOURCES_NUMBER];
+	struct list_head irq_handler_list_low_tab[DAL_IRQ_SOURCES_NUMBER];
 
 	/**
 	 * @irq_handler_list_high_tab:
@@ -440,6 +428,8 @@ struct amdgpu_dm_connector {
 #endif
 	bool force_yuv420_output;
 	struct dsc_preferred_settings dsc_settings;
+	/* Cached display modes */
+	struct drm_display_mode freesync_vid_base;
 };
 
 #define to_amdgpu_dm_connector(x) container_of(x, struct amdgpu_dm_connector, base)
@@ -500,6 +490,14 @@ struct dm_connector_state {
 	int vcpi_slots;
 	uint64_t pbn;
 };
+
+struct amdgpu_hdmi_vsdb_info {
+	unsigned int amd_vsdb_version;		/* VSDB version, should be used to determine which VSIF to send */
+	bool freesync_supported;		/* FreeSync Supported */
+	unsigned int min_refresh_rate_hz;	/* FreeSync Minimum Refresh Rate in Hz */
+	unsigned int max_refresh_rate_hz;	/* FreeSync Maximum Refresh Rate in Hz */
+};
+
 
 #define to_dm_connector_state(x)\
 	container_of((x), struct dm_connector_state, base)

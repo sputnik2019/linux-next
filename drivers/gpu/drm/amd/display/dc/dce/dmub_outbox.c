@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2020 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -20,16 +20,41 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  *
  * Authors: AMD
- *
  */
 
-#ifndef __AMDGPU_DM_DEBUGFS_H__
-#define __AMDGPU_DM_DEBUGFS_H__
+#include "dmub_outbox.h"
+#include "dc_dmub_srv.h"
+#include "dmub/inc/dmub_cmd.h"
 
-#include "amdgpu.h"
-#include "amdgpu_dm.h"
+/**
+ *****************************************************************************
+ *  Function: dmub_enable_outbox_notification
+ *
+ *  @brief
+ *		Sends inbox cmd to dmub to enable outbox1 messages with interrupt.
+ *		Dmub sends outbox1 message and triggers outbox1 interrupt.
+ *
+ *  @param
+ *		[in] dc: dc structure
+ *
+ *  @return
+ *     None
+ *****************************************************************************
+ */
+void dmub_enable_outbox_notification(struct dc *dc)
+{
+	union dmub_rb_cmd cmd;
+	struct dc_context *dc_ctx = dc->ctx;
 
-void connector_debugfs_init(struct amdgpu_dm_connector *connector);
-void dtn_debugfs_init(struct amdgpu_device *adev);
+	memset(&cmd, 0x0, sizeof(cmd));
+	cmd.outbox1_enable.header.type = DMUB_CMD__OUTBOX1_ENABLE;
+	cmd.outbox1_enable.header.sub_type = 0;
+	cmd.outbox1_enable.header.payload_bytes =
+		sizeof(cmd.outbox1_enable) -
+		sizeof(cmd.outbox1_enable.header);
+	cmd.outbox1_enable.enable = true;
 
-#endif
+	dc_dmub_srv_cmd_queue(dc_ctx->dmub_srv, &cmd);
+	dc_dmub_srv_cmd_execute(dc_ctx->dmub_srv);
+	dc_dmub_srv_wait_idle(dc_ctx->dmub_srv);
+}
