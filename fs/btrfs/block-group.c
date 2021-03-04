@@ -1162,6 +1162,11 @@ static int inc_block_group_ro(struct btrfs_block_group *cache, int force)
 	spin_lock(&sinfo->lock);
 	spin_lock(&cache->lock);
 
+	if (cache->swap_extents) {
+		ret = -ETXTBSY;
+		goto out;
+	}
+
 	if (cache->ro) {
 		cache->ro++;
 		ret = 0;
@@ -2262,29 +2267,33 @@ int btrfs_inc_block_group_ro(struct btrfs_block_group *cache,
 	struct btrfs_trans_handle *trans;
 	u64 alloc_flags;
 	int ret;
+	bool dirty_bg_running;
 
-again:
-	trans = btrfs_join_transaction(fs_info->extent_root);
-	if (IS_ERR(trans))
-		return PTR_ERR(trans);
+	do {
+		trans = btrfs_join_transaction(fs_info->extent_root);
+		if (IS_ERR(trans))
+			return PTR_ERR(trans);
 
-	/*
-	 * we're not allowed to set block groups readonly after the dirty
-	 * block groups cache has started writing.  If it already started,
-	 * back off and let this transaction commit
-	 */
-	mutex_lock(&fs_info->ro_block_group_mutex);
-	if (test_bit(BTRFS_TRANS_DIRTY_BG_RUN, &trans->transaction->flags)) {
-		u64 transid = trans->transid;
+		dirty_bg_running = false;
 
-		mutex_unlock(&fs_info->ro_block_group_mutex);
-		btrfs_end_transaction(trans);
+		/*
+		 * We're not allowed to set block groups readonly after the dirty
+		 * block group cache has started writing.  If it already started,
+		 * back off and let this transaction commit.
+		 */
+		mutex_lock(&fs_info->ro_block_group_mutex);
+		if (test_bit(BTRFS_TRANS_DIRTY_BG_RUN, &trans->transaction->flags)) {
+			u64 transid = trans->transid;
 
-		ret = btrfs_wait_for_commit(fs_info, transid);
-		if (ret)
-			return ret;
-		goto again;
-	}
+			mutex_unlock(&fs_info->ro_block_group_mutex);
+			btrfs_end_transaction(trans);
+
+			ret = btrfs_wait_for_commit(fs_info, transid);
+			if (ret)
+				return ret;
+			dirty_bg_running = true;
+		}
+	} while (dirty_bg_running);
 
 	if (do_chunk_alloc) {
 		/*
@@ -2307,7 +2316,7 @@ again:
 	}
 
 	ret = inc_block_group_ro(cache, 0);
-	if (!do_chunk_alloc)
+	if (!do_chunk_alloc || ret == -ETXTBSY)
 		goto unlock_out;
 	if (!ret)
 		goto out;
@@ -2316,6 +2325,8 @@ again:
 	if (ret < 0)
 		goto out;
 	ret = inc_block_group_ro(cache, 0);
+	if (ret == -ETXTBSY)
+		goto unlock_out;
 out:
 	if (cache->flags & BTRFS_BLOCK_GROUP_SYSTEM) {
 		alloc_flags = btrfs_get_alloc_profile(fs_info, cache->flags);
@@ -3406,6 +3417,7 @@ int btrfs_free_block_groups(struct btrfs_fs_info *info)
 		ASSERT(list_empty(&block_group->io_list));
 		ASSERT(list_empty(&block_group->bg_list));
 		ASSERT(refcount_read(&block_group->refs) == 1);
+		ASSERT(block_group->swap_extents == 0);
 		btrfs_put_block_group(block_group);
 
 		spin_lock(&info->block_group_cache_lock);
@@ -3471,4 +3483,27 @@ void btrfs_unfreeze_block_group(struct btrfs_block_group *block_group)
 		 */
 		__btrfs_remove_free_space_cache(block_group->free_space_ctl);
 	}
+}
+
+bool btrfs_inc_block_group_swap_extents(struct btrfs_block_group *bg)
+{
+	bool ret = true;
+
+	spin_lock(&bg->lock);
+	if (bg->ro)
+		ret = false;
+	else
+		bg->swap_extents++;
+	spin_unlock(&bg->lock);
+
+	return ret;
+}
+
+void btrfs_dec_block_group_swap_extents(struct btrfs_block_group *bg, int amount)
+{
+	spin_lock(&bg->lock);
+	ASSERT(!bg->ro);
+	ASSERT(bg->swap_extents >= amount);
+	bg->swap_extents -= amount;
+	spin_unlock(&bg->lock);
 }

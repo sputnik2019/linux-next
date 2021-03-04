@@ -106,12 +106,8 @@ static int copy_inline_to_page(struct btrfs_inode *inode,
 	set_bit(BTRFS_INODE_NO_DELALLOC_FLUSH, &inode->runtime_flags);
 
 	if (comp_type == BTRFS_COMPRESS_NONE) {
-		char *map;
-
-		map = kmap(page);
-		memcpy(map, data_start, datal);
+		memcpy_to_page(page, 0, data_start, datal);
 		flush_dcache_page(page);
-		kunmap(page);
 	} else {
 		ret = btrfs_decompress(comp_type, data_start, page, 0,
 				       inline_size, datal);
@@ -482,9 +478,9 @@ process_slot:
 			clone_info.file_offset = new_key.offset;
 			clone_info.extent_buf = buf;
 			clone_info.is_new_extent = false;
-			ret = btrfs_replace_file_extents(inode, path, drop_start,
-					new_key.offset + datal - 1, &clone_info,
-					&trans);
+			ret = btrfs_replace_file_extents(BTRFS_I(inode), path,
+					drop_start, new_key.offset + datal - 1,
+					&clone_info, &trans);
 			if (ret)
 				goto out;
 		} else if (type == BTRFS_FILE_EXTENT_INLINE) {
@@ -553,8 +549,26 @@ process_slot:
 		 */
 		btrfs_release_path(path);
 
-		ret = btrfs_replace_file_extents(inode, path, last_dest_end,
-				destoff + len - 1, NULL, &trans);
+		/*
+		 * When using NO_HOLES and we are cloning a range that covers
+		 * only a hole (no extents) into a range beyond the current
+		 * i_size, punching a hole in the target range will not create
+		 * an extent map defining a hole, because the range starts at or
+		 * beyond current i_size. If the file previously had an i_size
+		 * greater than the new i_size set by this clone operation, we
+		 * need to make sure the next fsync is a full fsync, so that it
+		 * detects and logs a hole covering a range from the current
+		 * i_size to the new i_size. If the clone range covers extents,
+		 * besides a hole, then we know the full sync flag was already
+		 * set by previous calls to btrfs_replace_file_extents() that
+		 * replaced file extent items.
+		 */
+		if (last_dest_end >= i_size_read(inode))
+			set_bit(BTRFS_INODE_NEEDS_FULL_SYNC,
+				&BTRFS_I(inode)->runtime_flags);
+
+		ret = btrfs_replace_file_extents(BTRFS_I(inode), path,
+				last_dest_end, destoff + len - 1, NULL, &trans);
 		if (ret)
 			goto out;
 

@@ -2954,8 +2954,7 @@ static void end_bio_extent_readpage(struct bio *bio)
 		if (likely(uptodate)) {
 			if (is_data_inode(inode))
 				ret = btrfs_verify_data_csum(io_bio,
-						bio_offset, page, start, end,
-						mirror);
+						bio_offset, page, start, end);
 			else
 				ret = btrfs_validate_metadata_buffer(io_bio,
 					page, start, end, mirror);
@@ -3008,12 +3007,23 @@ readpage_ok:
 		if (likely(uptodate)) {
 			loff_t i_size = i_size_read(inode);
 			pgoff_t end_index = i_size >> PAGE_SHIFT;
-			unsigned off;
 
-			/* Zero out the end if this page straddles i_size */
-			off = offset_in_page(i_size);
-			if (page->index == end_index && off)
-				zero_user_segment(page, off, PAGE_SIZE);
+			/*
+			 * Zero out the remaining part if this range straddles
+			 * i_size.
+			 *
+			 * Here we should only zero the range inside the bvec,
+			 * not touch anything else.
+			 *
+			 * NOTE: i_size is exclusive while end is inclusive.
+			 */
+			if (page->index == end_index && i_size <= end) {
+				u32 zero_start = max(offset_in_page(i_size),
+						     offset_in_page(end));
+
+				zero_user_segment(page, zero_start,
+						  offset_in_page(end) + 1);
+			}
 		}
 		ASSERT(bio_offset + len > bio_offset);
 		bio_offset += len;
