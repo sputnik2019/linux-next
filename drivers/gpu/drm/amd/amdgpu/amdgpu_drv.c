@@ -1288,9 +1288,7 @@ amdgpu_pci_shutdown(struct pci_dev *pdev)
 	 */
 	if (!amdgpu_passthrough(adev))
 		adev->mp1_state = PP_MP1_STATE_UNLOAD;
-	adev->in_poweroff_reboot_com = true;
 	amdgpu_device_ip_suspend(adev);
-	adev->in_poweroff_reboot_com = false;
 	adev->mp1_state = PP_MP1_STATE_NONE;
 }
 
@@ -1380,9 +1378,7 @@ static int amdgpu_pmops_poweroff(struct device *dev)
 	int r;
 
 	adev->pmops_state = AMDGPU_PMOPS_POWEROFF;
-	adev->in_poweroff_reboot_com = true;
 	r =  amdgpu_device_suspend(drm_dev, true);
-	adev->in_poweroff_reboot_com = false;
 	adev->pmops_state = AMDGPU_PMOPS_NONE;
 	return r;
 }
