@@ -1297,34 +1297,54 @@ amdgpu_pci_shutdown(struct pci_dev *pdev)
 static int amdgpu_pmops_prepare(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
+	struct amdgpu_device *adev = drm_to_adev(drm_dev);
+	int r;
 
+	adev->pmops_state = AMDGPU_PMOPS_PREPARE;
 	/* Return a positive number here so
 	 * DPM_FLAG_SMART_SUSPEND works properly
 	 */
 	if (amdgpu_device_supports_boco(drm_dev))
-		return pm_runtime_suspended(dev) &&
+		r= pm_runtime_suspended(dev) &&
 			pm_suspend_via_firmware();
-
-	return 0;
+	else
+		r = 0;
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
+	return r;
 }
 
 static void amdgpu_pmops_complete(struct device *dev)
 {
+	struct drm_device *drm_dev = dev_get_drvdata(dev);
+	struct amdgpu_device *adev = drm_to_adev(drm_dev);
+
+	adev->pmops_state = AMDGPU_PMOPS_COMPLETE;
 	/* nothing to do */
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
 }
 
 static int amdgpu_pmops_suspend(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
+	struct amdgpu_device *adev = drm_to_adev(drm_dev);
+	int r;
 
-	return amdgpu_device_suspend(drm_dev, true);
+	adev->pmops_state = AMDGPU_PMOPS_SUSPEND;
+	r = amdgpu_device_suspend(drm_dev, true);
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
+	return r;
 }
 
 static int amdgpu_pmops_resume(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
+	struct amdgpu_device *adev = drm_to_adev(drm_dev);
+	int r;
 
-	return amdgpu_device_resume(drm_dev, true);
+	adev->pmops_state = AMDGPU_PMOPS_RESUME;
+	r = amdgpu_device_resume(drm_dev, true);
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
+	return r;
 }
 
 static int amdgpu_pmops_freeze(struct device *dev)
@@ -1333,9 +1353,9 @@ static int amdgpu_pmops_freeze(struct device *dev)
 	struct amdgpu_device *adev = drm_to_adev(drm_dev);
 	int r;
 
-	adev->in_hibernate = true;
+	adev->pmops_state = AMDGPU_PMOPS_FREEZE;
 	r = amdgpu_device_suspend(drm_dev, true);
-	adev->in_hibernate = false;
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
 	if (r)
 		return r;
 	return amdgpu_asic_reset(adev);
@@ -1344,8 +1364,13 @@ static int amdgpu_pmops_freeze(struct device *dev)
 static int amdgpu_pmops_thaw(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
+	struct amdgpu_device *adev = drm_to_adev(drm_dev);
+	int r;
 
-	return amdgpu_device_resume(drm_dev, true);
+	adev->pmops_state = AMDGPU_PMOPS_THAW;
+	r = amdgpu_device_resume(drm_dev, true);
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
+	return r;
 }
 
 static int amdgpu_pmops_poweroff(struct device *dev)
@@ -1354,17 +1379,24 @@ static int amdgpu_pmops_poweroff(struct device *dev)
 	struct amdgpu_device *adev = drm_to_adev(drm_dev);
 	int r;
 
+	adev->pmops_state = AMDGPU_PMOPS_POWEROFF;
 	adev->in_poweroff_reboot_com = true;
 	r =  amdgpu_device_suspend(drm_dev, true);
 	adev->in_poweroff_reboot_com = false;
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
 	return r;
 }
 
 static int amdgpu_pmops_restore(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
+	struct amdgpu_device *adev = drm_to_adev(drm_dev);
+	int r;
 
-	return amdgpu_device_resume(drm_dev, true);
+	adev->pmops_state = AMDGPU_PMOPS_RESTORE;
+	r = amdgpu_device_resume(drm_dev, true);
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
+	return r;
 }
 
 static int amdgpu_pmops_runtime_suspend(struct device *dev)
@@ -1389,6 +1421,7 @@ static int amdgpu_pmops_runtime_suspend(struct device *dev)
 		}
 	}
 
+	adev->pmops_state = AMDGPU_PMOPS_RUNTIME_SUSPEND;
 	adev->in_runpm = true;
 	if (amdgpu_device_supports_px(drm_dev))
 		drm_dev->switch_power_state = DRM_SWITCH_POWER_CHANGING;
@@ -1396,6 +1429,7 @@ static int amdgpu_pmops_runtime_suspend(struct device *dev)
 	ret = amdgpu_device_suspend(drm_dev, false);
 	if (ret) {
 		adev->in_runpm = false;
+		adev->pmops_state = AMDGPU_PMOPS_NONE;
 		return ret;
 	}
 
@@ -1412,6 +1446,8 @@ static int amdgpu_pmops_runtime_suspend(struct device *dev)
 		amdgpu_device_baco_enter(drm_dev);
 	}
 
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
+
 	return 0;
 }
 
@@ -1425,6 +1461,7 @@ static int amdgpu_pmops_runtime_resume(struct device *dev)
 	if (!adev->runpm)
 		return -EINVAL;
 
+	adev->pmops_state = AMDGPU_PMOPS_RUNTIME_RESUME;
 	if (amdgpu_device_supports_px(drm_dev)) {
 		drm_dev->switch_power_state = DRM_SWITCH_POWER_CHANGING;
 
@@ -1449,6 +1486,7 @@ static int amdgpu_pmops_runtime_resume(struct device *dev)
 	if (amdgpu_device_supports_px(drm_dev))
 		drm_dev->switch_power_state = DRM_SWITCH_POWER_ON;
 	adev->in_runpm = false;
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
 	return 0;
 }
 
@@ -1464,6 +1502,7 @@ static int amdgpu_pmops_runtime_idle(struct device *dev)
 		return -EBUSY;
 	}
 
+	adev->pmops_state = AMDGPU_PMOPS_RUNTIME_IDLE;
 	if (amdgpu_device_has_dc_support(adev)) {
 		struct drm_crtc *crtc;
 
@@ -1504,6 +1543,7 @@ static int amdgpu_pmops_runtime_idle(struct device *dev)
 
 	pm_runtime_mark_last_busy(dev);
 	pm_runtime_autosuspend(dev);
+	adev->pmops_state = AMDGPU_PMOPS_NONE;
 	return ret;
 }
 

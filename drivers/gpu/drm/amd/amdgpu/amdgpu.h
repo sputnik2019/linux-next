@@ -348,6 +348,24 @@ bool amdgpu_get_bios(struct amdgpu_device *adev);
 bool amdgpu_read_bios(struct amdgpu_device *adev);
 
 /*
+ * PM Ops
+ */
+enum amdgpu_pmops_state {
+	AMDGPU_PMOPS_NONE = 0,
+	AMDGPU_PMOPS_PREPARE,
+	AMDGPU_PMOPS_COMPLETE,
+	AMDGPU_PMOPS_SUSPEND,
+	AMDGPU_PMOPS_RESUME,
+	AMDGPU_PMOPS_FREEZE,
+	AMDGPU_PMOPS_THAW,
+	AMDGPU_PMOPS_POWEROFF,
+	AMDGPU_PMOPS_RESTORE,
+	AMDGPU_PMOPS_RUNTIME_SUSPEND,
+	AMDGPU_PMOPS_RUNTIME_RESUME,
+	AMDGPU_PMOPS_RUNTIME_IDLE,
+};
+
+/*
  * Clocks
  */
 
@@ -1019,8 +1037,8 @@ struct amdgpu_device {
 	u8				reset_magic[AMDGPU_RESET_MAGIC_NUM];
 
 	/* s3/s4 mask */
+	enum amdgpu_pmops_state         pmops_state;
 	bool                            in_suspend;
-	bool				in_hibernate;
 
 	/*
 	 * The combination flag in_poweroff_reboot_com used to identify the poweroff
