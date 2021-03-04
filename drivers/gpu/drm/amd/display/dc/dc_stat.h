@@ -1,7 +1,5 @@
 /*
- * Copyright 2008 Advanced Micro Devices, Inc.
- * Copyright 2008 Red Hat Inc.
- * Copyright 2009 Jerome Glisse.
+ * Copyright 2020 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -21,20 +19,24 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  *
+ * Authors: AMD
+ *
  */
 
-/*
- * Debugfs
- */
-struct amdgpu_autodump {
-	struct completion		dumping;
-	struct wait_queue_head		gpu_hang;
-};
+#ifndef _DC_STAT_H_
+#define _DC_STAT_H_
 
-int amdgpu_debugfs_regs_init(struct amdgpu_device *adev);
-int amdgpu_debugfs_init(struct amdgpu_device *adev);
-void amdgpu_debugfs_fini(struct amdgpu_device *adev);
-void amdgpu_debugfs_fence_init(struct amdgpu_device *adev);
-void amdgpu_debugfs_firmware_init(struct amdgpu_device *adev);
-void amdgpu_debugfs_gem_init(struct amdgpu_device *adev);
-int amdgpu_debugfs_wait_dump(struct amdgpu_device *adev);
+/**
+ * DOC: DC STAT Interface
+ *
+ * These interfaces are called without acquiring DAL and DC locks.
+ * Hence, there is limitations on whese interfaces can access. Only
+ * variables exclusively defined for these interfaces can be modified.
+ */
+
+#include "dc.h"
+#include "dmub/dmub_srv.h"
+
+void dc_stat_get_dmub_notification(const struct dc *dc, struct dmub_notification *notify);
+
+#endif /* _DC_STAT_H_ */
