@@ -578,23 +578,67 @@ netdev_features(void)
 }
 
 static void __init
+page_flags_test(int section, int node, int zone, int last_cpupid,
+		int kasan_tag, int flags, const char *name, char *cmp_buf)
+{
+	unsigned long page_flags = 0;
+	unsigned long size = 0;
+
+	flags &= BIT(NR_PAGEFLAGS) - 1;
+	if (flags) {
+		page_flags |= flags;
+		snprintf(cmp_buf + size, BUF_SIZE - size, "%s|", name);
+		size = strlen(cmp_buf);
+	}
+
+#ifdef SECTION_IN_PAGE_FLAGS
+	page_flags |= (sec & SECTIONS_MASK) << SECTIONS_PGSHIFT;
+	snprintf(cmp_buf + size, BUF_SIZE - size, "section=%#x|", sec);
+	size = strlen(cmp_buf);
+#endif
+
+	page_flags |= ((node & NODES_MASK) << NODES_PGSHIFT) |
+			((zone & ZONES_MASK) << ZONES_PGSHIFT);
+	snprintf(cmp_buf + size, BUF_SIZE - size, "node=%d|zone=%d", node, zone);
+	size = strlen(cmp_buf);
+
+#ifndef LAST_CPUPID_NOT_IN_PAGE_FLAGS
+	page_flags |= (last_cpupid & LAST_CPUPID_MASK) << LAST_CPUPID_PGSHIFT;
+	snprintf(cmp_buf + size, BUF_SIZE - size, "|lastcpupid=%#x", last_cpupid);
+	size = strlen(cmp_buf);
+#endif
+
+#if defined(CONFIG_KASAN_SW_TAGS) || defined(CONFIG_KASAN_HW_TAGS)
+	page_flags |= (tag & KASAN_TAG_MASK) << KASAN_TAG_PGSHIFT;
+	snprintf(cmp_buf + size, BUF_SIZE - size, "|kasantag=%#x", tag);
+	size = strlen(cmp_buf);
+#endif
+
+	test(cmp_buf, "%pGp", &page_flags);
+}
+
+static void __init
 flags(void)
 {
 	unsigned long flags;
-	gfp_t gfp;
 	char *cmp_buffer;
+	gfp_t gfp;
+
+	cmp_buffer = kmalloc(BUF_SIZE, GFP_KERNEL);
+	if (!cmp_buffer)
+		return;
 
 	flags = 0;
-	test("", "%pGp", &flags);
+	page_flags_test(0, 0, 0, 0, 0, flags, "", cmp_buffer);
 
-	/* Page flags should filter the zone id */
 	flags = 1UL << NR_PAGEFLAGS;
-	test("", "%pGp", &flags);
+	page_flags_test(0, 0, 0, 0, 0, flags, "", cmp_buffer);
 
 	flags |= 1UL << PG_uptodate | 1UL << PG_dirty | 1UL << PG_lru
 		| 1UL << PG_active | 1UL << PG_swapbacked;
-	test("uptodate|dirty|lru|active|swapbacked", "%pGp", &flags);
-
+	page_flags_test(1, 1, 1, 0x1fffff, 1, flags,
+			"uptodate|dirty|lru|active|swapbacked",
+			cmp_buffer);
 
 	flags = VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC
 			| VM_DENYWRITE;
@@ -608,10 +652,6 @@ flags(void)
 
 	gfp = __GFP_ATOMIC;
 	test("__GFP_ATOMIC", "%pGg", &gfp);
-
-	cmp_buffer = kmalloc(BUF_SIZE, GFP_KERNEL);
-	if (!cmp_buffer)
-		return;
 
 	/* Any flags not translated by the table should remain numeric */
 	gfp = ~__GFP_BITS_MASK;
