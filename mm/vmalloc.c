@@ -640,7 +640,11 @@ struct page *vmalloc_to_page(const void *vmalloc_addr)
 	if (p4d_none(*p4d))
 		return NULL;
 	if (p4d_leaf(*p4d))
+#ifdef CONFIG_SPARC32
+		return NULL;
+#else
 		return p4d_page(*p4d) + ((addr & ~P4D_MASK) >> PAGE_SHIFT);
+#endif
 	if (WARN_ON_ONCE(p4d_bad(*p4d)))
 		return NULL;
 
@@ -648,7 +652,11 @@ struct page *vmalloc_to_page(const void *vmalloc_addr)
 	if (pud_none(*pud))
 		return NULL;
 	if (pud_leaf(*pud))
+#ifdef CONFIG_SPARC32
+		return NULL;
+#else
 		return pud_page(*pud) + ((addr & ~PUD_MASK) >> PAGE_SHIFT);
+#endif
 	if (WARN_ON_ONCE(pud_bad(*pud)))
 		return NULL;
 
