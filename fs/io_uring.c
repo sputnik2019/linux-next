@@ -4858,7 +4858,6 @@ static int __io_async_wake(struct io_kiocb *req, struct io_poll_iocb *poll,
 
 	req->result = mask;
 	req->task_work.func = func;
-	percpu_ref_get(&req->ctx->refs);
 
 	/*
 	 * If this fails, then the task is exiting. When a task exits, the
@@ -4958,8 +4957,6 @@ static void io_poll_task_func(struct callback_head *cb)
 		if (nxt)
 			__io_req_task_submit(nxt);
 	}
-
-	percpu_ref_put(&ctx->refs);
 }
 
 static int io_poll_double_wake(struct wait_queue_entry *wait, unsigned mode,
@@ -5066,7 +5063,6 @@ static void io_async_task_func(struct callback_head *cb)
 
 	if (io_poll_rewait(req, &apoll->poll)) {
 		spin_unlock_irq(&ctx->completion_lock);
-		percpu_ref_put(&ctx->refs);
 		return;
 	}
 
@@ -5082,7 +5078,6 @@ static void io_async_task_func(struct callback_head *cb)
 	else
 		__io_req_task_cancel(req, -ECANCELED);
 
-	percpu_ref_put(&ctx->refs);
 	kfree(apoll->double_poll);
 	kfree(apoll);
 }
