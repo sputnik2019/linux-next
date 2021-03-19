@@ -14,7 +14,6 @@
 #include <linux/pid.h>
 #include <linux/sem.h>
 #include <linux/shm.h>
-#include <linux/kcov.h>
 #include <linux/mutex.h>
 #include <linux/plist.h>
 #include <linux/hrtimer.h>
@@ -1044,6 +1043,9 @@ struct task_struct {
 	int				softirqs_enabled;
 	int				softirq_context;
 	int				irq_config;
+#endif
+#ifdef CONFIG_PREEMPT_RT
+	int				softirq_disable_cnt;
 #endif
 
 #ifdef CONFIG_LOCKDEP
