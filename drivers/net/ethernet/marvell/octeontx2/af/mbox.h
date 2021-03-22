@@ -216,6 +216,9 @@ M(NPC_MCAM_READ_ENTRY,	  0x600f, npc_mcam_read_entry,			\
 				  npc_mcam_read_entry_rsp)		\
 M(NPC_MCAM_READ_BASE_RULE, 0x6011, npc_read_base_steer_rule,            \
 				   msg_req, npc_mcam_read_base_rule_rsp)  \
+M(NPC_MCAM_GET_STATS, 0x6012, npc_mcam_entry_stats,                     \
+				   npc_mcam_get_stats_req,              \
+				   npc_mcam_get_stats_rsp)              \
 /* NIX mbox IDs (range 0x8000 - 0xFFFF) */				\
 M(NIX_LF_ALLOC,		0x8000, nix_lf_alloc,				\
 				 nix_lf_alloc_req, nix_lf_alloc_rsp)	\
@@ -605,6 +608,7 @@ enum nix_af_status {
 	NIX_AF_INVAL_SSO_PF_FUNC    = -420,
 	NIX_AF_ERR_TX_VTAG_NOSPC    = -421,
 	NIX_AF_ERR_RX_VTAG_INUSE    = -422,
+	NIX_AF_ERR_NPC_KEY_NOT_SUPP = -423,
 };
 
 /* For NIX RX vtag action  */
@@ -1141,6 +1145,7 @@ struct npc_install_flow_req {
 	u64 features;
 	u16 entry;
 	u16 channel;
+	u16 chan_mask;
 	u8 intf;
 	u8 set_cntr; /* If counter is available set counter for this entry ? */
 	u8 default_rule;
@@ -1191,6 +1196,17 @@ struct npc_mcam_read_entry_rsp {
 struct npc_mcam_read_base_rule_rsp {
 	struct mbox_msghdr hdr;
 	struct mcam_entry entry;
+};
+
+struct npc_mcam_get_stats_req {
+	struct mbox_msghdr hdr;
+	u16 entry; /* mcam entry */
+};
+
+struct npc_mcam_get_stats_rsp {
+	struct mbox_msghdr hdr;
+	u64 stat;  /* counter stats */
+	u8 stat_ena; /* enabled */
 };
 
 enum ptp_op {
