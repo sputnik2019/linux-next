@@ -6982,7 +6982,7 @@ SYSCALL_DEFINE0(sched_yield)
 }
 
 #if !defined(CONFIG_PREEMPTION) || defined(CONFIG_PREEMPT_DYNAMIC)
-int __sched __cond_resched(void)
+long __sched __cond_resched(void)
 {
 	if (should_resched(0)) {
 		preempt_schedule_common();
@@ -7012,7 +7012,7 @@ EXPORT_STATIC_CALL_TRAMP(might_resched);
  * operations here to prevent schedule() from being called twice (once via
  * spin_unlock(), once by hand).
  */
-int __cond_resched_lock(spinlock_t *lock)
+long __cond_resched_lock(spinlock_t *lock)
 {
 	int resched = should_resched(PREEMPT_LOCK_OFFSET);
 	int ret = 0;
@@ -7032,7 +7032,7 @@ int __cond_resched_lock(spinlock_t *lock)
 }
 EXPORT_SYMBOL(__cond_resched_lock);
 
-int __cond_resched_rwlock_read(rwlock_t *lock)
+long __cond_resched_rwlock_read(rwlock_t *lock)
 {
 	int resched = should_resched(PREEMPT_LOCK_OFFSET);
 	int ret = 0;
@@ -7052,7 +7052,7 @@ int __cond_resched_rwlock_read(rwlock_t *lock)
 }
 EXPORT_SYMBOL(__cond_resched_rwlock_read);
 
-int __cond_resched_rwlock_write(rwlock_t *lock)
+long __cond_resched_rwlock_write(rwlock_t *lock)
 {
 	int resched = should_resched(PREEMPT_LOCK_OFFSET);
 	int ret = 0;
