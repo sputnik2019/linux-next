@@ -1616,6 +1616,7 @@ static inline void f2fs_show_quota_options(struct seq_file *seq,
 #endif
 }
 
+#ifdef CONFIG_F2FS_FS_COMPRESSION
 static inline void f2fs_show_compress_options(struct seq_file *seq,
 							struct super_block *sb)
 {
@@ -1661,6 +1662,7 @@ static inline void f2fs_show_compress_options(struct seq_file *seq,
 	else if (F2FS_OPTION(sbi).compress_mode == COMPR_MODE_USER)
 		seq_printf(seq, ",compress_mode=%s", "user");
 }
+#endif
 
 static int f2fs_show_options(struct seq_file *seq, struct dentry *root)
 {
@@ -1865,7 +1867,7 @@ static int f2fs_disable_checkpoint(struct f2fs_sb_info *sbi)
 
 	while (!f2fs_time_over(sbi, DISABLE_TIME)) {
 		down_write(&sbi->gc_lock);
-		err = f2fs_gc(sbi, true, false, NULL_SEGNO);
+		err = f2fs_gc(sbi, true, false, false, NULL_SEGNO);
 		if (err == -ENODATA) {
 			err = 0;
 			break;
@@ -2067,8 +2069,10 @@ static int f2fs_remount(struct super_block *sb, int *flags, char *data)
 		}
 	}
 
-	if (!test_opt(sbi, DISABLE_CHECKPOINT) &&
-			test_opt(sbi, MERGE_CHECKPOINT)) {
+	if ((*flags & SB_RDONLY) || test_opt(sbi, DISABLE_CHECKPOINT) ||
+			!test_opt(sbi, MERGE_CHECKPOINT)) {
+		f2fs_stop_ckpt_thread(sbi);
+	} else {
 		err = f2fs_start_ckpt_thread(sbi);
 		if (err) {
 			f2fs_err(sbi,
@@ -2076,8 +2080,6 @@ static int f2fs_remount(struct super_block *sb, int *flags, char *data)
 			    err);
 			goto restore_gc;
 		}
-	} else {
-		f2fs_stop_ckpt_thread(sbi);
 	}
 
 	/*
@@ -3833,7 +3835,7 @@ try_onemore:
 
 	/* setup checkpoint request control and start checkpoint issue thread */
 	f2fs_init_ckpt_req_control(sbi);
-	if (!test_opt(sbi, DISABLE_CHECKPOINT) &&
+	if (!f2fs_readonly(sb) && !test_opt(sbi, DISABLE_CHECKPOINT) &&
 			test_opt(sbi, MERGE_CHECKPOINT)) {
 		err = f2fs_start_ckpt_thread(sbi);
 		if (err) {
