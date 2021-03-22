@@ -25,7 +25,7 @@ static void hv_qlock_kick(int cpu)
 
 static void hv_qlock_wait(u8 *byte, u8 val)
 {
-	unsigned long msr_val;
+	unsigned long msr_val __maybe_unused;
 	unsigned long flags;
 
 	if (in_nmi())
