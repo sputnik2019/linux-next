@@ -141,6 +141,17 @@ void pmbus_clear_cache(struct i2c_client *client)
 }
 EXPORT_SYMBOL_GPL(pmbus_clear_cache);
 
+void pmbus_set_update(struct i2c_client *client, u8 reg, bool update)
+{
+	struct pmbus_data *data = i2c_get_clientdata(client);
+	struct pmbus_sensor *sensor;
+
+	for (sensor = data->sensors; sensor; sensor = sensor->next)
+		if (sensor->reg == reg)
+			sensor->update = update;
+}
+EXPORT_SYMBOL_GPL(pmbus_set_update);
+
 int pmbus_set_page(struct i2c_client *client, int page, int phase)
 {
 	struct pmbus_data *data = i2c_get_clientdata(client);
@@ -2557,6 +2568,7 @@ int pmbus_do_probe(struct i2c_client *client, struct pmbus_driver_info *info)
 	struct pmbus_data *data;
 	size_t groups_num = 0;
 	int ret;
+	char *name;
 
 	if (!info)
 		return -ENODEV;
@@ -2606,10 +2618,15 @@ int pmbus_do_probe(struct i2c_client *client, struct pmbus_driver_info *info)
 		return -ENODEV;
 	}
 
+	name = devm_kstrdup(dev, client->name, GFP_KERNEL);
+	if (!name)
+		return -ENOMEM;
+	strreplace(name, '-', '_');
+
 	data->groups[0] = &data->group;
 	memcpy(data->groups + 1, info->groups, sizeof(void *) * groups_num);
 	data->hwmon_dev = devm_hwmon_device_register_with_groups(dev,
-					client->name, data, data->groups);
+					name, data, data->groups);
 	if (IS_ERR(data->hwmon_dev)) {
 		dev_err(dev, "Failed to register hwmon device\n");
 		return PTR_ERR(data->hwmon_dev);
