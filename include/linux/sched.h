@@ -14,7 +14,6 @@
 #include <linux/pid.h>
 #include <linux/sem.h>
 #include <linux/shm.h>
-#include <linux/kcov.h>
 #include <linux/mutex.h>
 #include <linux/plist.h>
 #include <linux/hrtimer.h>
@@ -1045,6 +1044,9 @@ struct task_struct {
 	int				softirq_context;
 	int				irq_config;
 #endif
+#ifdef CONFIG_PREEMPT_RT
+	int				softirq_disable_cnt;
+#endif
 
 #ifdef CONFIG_LOCKDEP
 # define MAX_LOCK_DEPTH			48UL
@@ -1099,7 +1101,7 @@ struct task_struct {
 #ifdef CONFIG_CPUSETS
 	/* Protected by ->alloc_lock: */
 	nodemask_t			mems_allowed;
-	/* Seqence number to catch updates: */
+	/* Sequence number to catch updates: */
 	seqcount_spinlock_t		mems_allowed_seq;
 	int				cpuset_mem_spread_rotor;
 	int				cpuset_slab_spread_rotor;
@@ -1880,20 +1882,20 @@ static inline int test_tsk_need_resched(struct task_struct *tsk)
  * cond_resched_lock() will drop the spinlock before scheduling,
  */
 #if !defined(CONFIG_PREEMPTION) || defined(CONFIG_PREEMPT_DYNAMIC)
-extern int __cond_resched(void);
+extern long __cond_resched(void);
 
 #ifdef CONFIG_PREEMPT_DYNAMIC
 
 DECLARE_STATIC_CALL(cond_resched, __cond_resched);
 
-static __always_inline int _cond_resched(void)
+static __always_inline long _cond_resched(void)
 {
 	return static_call_mod(cond_resched)();
 }
 
 #else
 
-static inline int _cond_resched(void)
+static inline long _cond_resched(void)
 {
 	return __cond_resched();
 }
@@ -1902,7 +1904,7 @@ static inline int _cond_resched(void)
 
 #else
 
-static inline int _cond_resched(void) { return 0; }
+static inline long _cond_resched(void) { return 0; }
 
 #endif /* !defined(CONFIG_PREEMPTION) || defined(CONFIG_PREEMPT_DYNAMIC) */
 
@@ -1911,9 +1913,9 @@ static inline int _cond_resched(void) { return 0; }
 	_cond_resched();			\
 })
 
-extern int __cond_resched_lock(spinlock_t *lock);
-extern int __cond_resched_rwlock_read(rwlock_t *lock);
-extern int __cond_resched_rwlock_write(rwlock_t *lock);
+extern long __cond_resched_lock(spinlock_t *lock);
+extern long __cond_resched_rwlock_read(rwlock_t *lock);
+extern long __cond_resched_rwlock_write(rwlock_t *lock);
 
 #define cond_resched_lock(lock) ({				\
 	___might_sleep(__FILE__, __LINE__, PREEMPT_LOCK_OFFSET);\
