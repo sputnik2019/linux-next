@@ -55,7 +55,8 @@ static void hv_apic_icr_write(u32 low, u32 id)
 
 static u32 hv_apic_read(u32 reg)
 {
-	u32 reg_val, hi;
+	u32 hi __maybe_unused;
+	u32 reg_val;
 
 	switch (reg) {
 	case APIC_EOI:
