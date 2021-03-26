@@ -1102,7 +1102,7 @@ static int smu_smc_hw_setup(struct smu_context *smu)
 	uint32_t pcie_gen = 0, pcie_width = 0;
 	int ret = 0;
 
-	if (adev->in_suspend && smu_is_dpm_running(smu)) {
+	if (!smu->is_apu && adev->in_suspend && smu_is_dpm_running(smu)) {
 		dev_info(adev->dev, "dpm has been enabled\n");
 		/* this is needed specifically */
 		if ((adev->asic_type >= CHIP_SIENNA_CICHLID) &&
