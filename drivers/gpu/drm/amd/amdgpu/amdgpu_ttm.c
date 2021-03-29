@@ -1087,12 +1087,12 @@ static void amdgpu_ttm_backend_unbind(struct ttm_device *bdev,
 	struct amdgpu_ttm_tt *gtt = (void *)ttm;
 	int r;
 
-	if (!gtt->bound)
-		return;
-
 	/* if the pages have userptr pinning then clear that first */
 	if (gtt->userptr)
 		amdgpu_ttm_tt_unpin_userptr(bdev, ttm);
+
+	if (!gtt->bound)
+		return;
 
 	if (gtt->offset == AMDGPU_BO_INVALID_OFFSET)
 		return;
@@ -1503,7 +1503,7 @@ static int amdgpu_ttm_access_memory(struct ttm_buffer_object *bo,
 				memcpy(buf, &value, bytes);
 			}
 		} else {
-			bytes = cursor.size & 0x3ull;
+			bytes = cursor.size & ~0x3ULL;
 			amdgpu_device_vram_access(adev, cursor.start,
 						  (uint32_t *)buf, bytes,
 						  write);
