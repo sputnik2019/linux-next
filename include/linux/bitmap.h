@@ -4,8 +4,9 @@
 
 #ifndef __ASSEMBLY__
 
+#include <linux/align.h>
 #include <linux/bitops.h>
-#include <linux/kernel.h>
+#include <linux/limits.h>
 #include <linux/string.h>
 #include <linux/types.h>
 
