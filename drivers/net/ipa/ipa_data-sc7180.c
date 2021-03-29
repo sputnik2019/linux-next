@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
-/* Copyright (C) 2019-2020 Linaro Ltd. */
+/* Copyright (C) 2019-2021 Linaro Ltd. */
 
 #include <linux/log2.h>
 
@@ -8,6 +8,40 @@
 #include "ipa_data.h"
 #include "ipa_endpoint.h"
 #include "ipa_mem.h"
+
+/** enum ipa_resource_type - IPA resource types */
+enum ipa_resource_type {
+	/* Source resource types; first must have value 0 */
+	IPA_RESOURCE_TYPE_SRC_PKT_CONTEXTS		= 0,
+	IPA_RESOURCE_TYPE_SRC_DESCRIPTOR_LISTS,
+	IPA_RESOURCE_TYPE_SRC_DESCRIPTOR_BUFF,
+	IPA_RESOURCE_TYPE_SRC_HPS_DMARS,
+	IPA_RESOURCE_TYPE_SRC_ACK_ENTRIES,
+
+	/* Destination resource types; first must have value 0 */
+	IPA_RESOURCE_TYPE_DST_DATA_SECTORS		= 0,
+	IPA_RESOURCE_TYPE_DST_DPS_DMARS,
+};
+
+/* Resource groups used for the SC7180 SoC */
+enum ipa_rsrc_group_id {
+	/* Source resource group identifiers */
+	IPA_RSRC_GROUP_SRC_UL_DL	= 0,
+	IPA_RSRC_GROUP_SRC_COUNT,	/* Last in set; not a source group */
+
+	/* Destination resource group identifiers */
+	IPA_RSRC_GROUP_DST_UL_DL_DPL	= 0,
+	IPA_RSRC_GROUP_DST_COUNT,	/* Last; not a destination group */
+};
+
+/* QSB configuration for the SC7180 SoC. */
+static const struct ipa_qsb_data ipa_qsb_data[] = {
+	[IPA_QSB_MASTER_DDR] = {
+		.max_writes	= 8,
+		.max_reads	= 12,
+		/* no outstanding read byte (beat) limit */
+	},
+};
 
 /* Endpoint configuration for the SC7180 SoC. */
 static const struct ipa_gsi_endpoint_data ipa_gsi_endpoint_data[] = {
@@ -22,11 +56,13 @@ static const struct ipa_gsi_endpoint_data ipa_gsi_endpoint_data[] = {
 			.tlv_count	= 20,
 		},
 		.endpoint = {
-			.seq_type	= IPA_SEQ_DMA_ONLY,
 			.config = {
-				.resource_group	= 0,
+				.resource_group	= IPA_RSRC_GROUP_SRC_UL_DL,
 				.dma_mode	= true,
 				.dma_endpoint	= IPA_ENDPOINT_AP_LAN_RX,
+				.tx = {
+					.seq_type = IPA_SEQ_DMA,
+				},
 			},
 		},
 	},
@@ -41,9 +77,8 @@ static const struct ipa_gsi_endpoint_data ipa_gsi_endpoint_data[] = {
 			.tlv_count	= 6,
 		},
 		.endpoint = {
-			.seq_type	= IPA_SEQ_INVALID,
 			.config = {
-				.resource_group	= 0,
+				.resource_group	= IPA_RSRC_GROUP_DST_UL_DL_DPL,
 				.aggregation	= true,
 				.status_enable	= true,
 				.rx = {
@@ -64,14 +99,14 @@ static const struct ipa_gsi_endpoint_data ipa_gsi_endpoint_data[] = {
 		},
 		.endpoint = {
 			.filter_support	= true,
-			.seq_type	=
-				IPA_SEQ_PKT_PROCESS_NO_DEC_NO_UCP_DMAP,
 			.config = {
-				.resource_group	= 0,
+				.resource_group	= IPA_RSRC_GROUP_SRC_UL_DL,
 				.checksum	= true,
 				.qmap		= true,
 				.status_enable	= true,
 				.tx = {
+					.seq_type = IPA_SEQ_1_PASS_SKIP_LAST_UC,
+					.seq_rep_type = IPA_SEQ_REP_DMA_PARSER,
 					.status_endpoint =
 						IPA_ENDPOINT_MODEM_AP_RX,
 				},
@@ -89,9 +124,8 @@ static const struct ipa_gsi_endpoint_data ipa_gsi_endpoint_data[] = {
 			.tlv_count	= 6,
 		},
 		.endpoint = {
-			.seq_type	= IPA_SEQ_INVALID,
 			.config = {
-				.resource_group	= 0,
+				.resource_group	= IPA_RSRC_GROUP_DST_UL_DL_DPL,
 				.checksum	= true,
 				.qmap		= true,
 				.aggregation	= true,
@@ -130,66 +164,53 @@ static const struct ipa_gsi_endpoint_data ipa_gsi_endpoint_data[] = {
 	},
 };
 
-/* For the SC7180, resource groups are allocated this way:
- *   group 0:	UL_DL
- */
-static const struct ipa_resource_src ipa_resource_src[] = {
-	{
-		.type = IPA_RESOURCE_TYPE_SRC_PKT_CONTEXTS,
-		.limits[0] = {
-			.min = 3,
-			.max = 63,
+/* Source resource configuration data for the SC7180 SoC */
+static const struct ipa_resource ipa_resource_src[] = {
+	[IPA_RESOURCE_TYPE_SRC_PKT_CONTEXTS] = {
+		.limits[IPA_RSRC_GROUP_SRC_UL_DL] = {
+			.min = 3,	.max = 63,
 		},
 	},
-	{
-		.type = IPA_RESOURCE_TYPE_SRC_DESCRIPTOR_LISTS,
-		.limits[0] = {
-			.min = 3,
-			.max = 3,
+	[IPA_RESOURCE_TYPE_SRC_DESCRIPTOR_LISTS] = {
+		.limits[IPA_RSRC_GROUP_SRC_UL_DL] = {
+			.min = 3,	.max = 3,
 		},
 	},
-	{
-		.type = IPA_RESOURCE_TYPE_SRC_DESCRIPTOR_BUFF,
-		.limits[0] = {
-			.min = 10,
-			.max = 10,
+	[IPA_RESOURCE_TYPE_SRC_DESCRIPTOR_BUFF] = {
+		.limits[IPA_RSRC_GROUP_SRC_UL_DL] = {
+			.min = 10,	.max = 10,
 		},
 	},
-	{
-		.type = IPA_RESOURCE_TYPE_SRC_HPS_DMARS,
-		.limits[0] = {
-			.min = 1,
-			.max = 1,
+	[IPA_RESOURCE_TYPE_SRC_HPS_DMARS] = {
+		.limits[IPA_RSRC_GROUP_SRC_UL_DL] = {
+			.min = 1,	.max = 1,
 		},
 	},
-	{
-		.type = IPA_RESOURCE_TYPE_SRC_ACK_ENTRIES,
-		.limits[0] = {
-			.min = 5,
-			.max = 5,
+	[IPA_RESOURCE_TYPE_SRC_ACK_ENTRIES] = {
+		.limits[IPA_RSRC_GROUP_SRC_UL_DL] = {
+			.min = 5,	.max = 5,
 		},
 	},
 };
 
-static const struct ipa_resource_dst ipa_resource_dst[] = {
-	{
-		.type = IPA_RESOURCE_TYPE_DST_DATA_SECTORS,
-		.limits[0] = {
-			.min = 3,
-			.max = 3,
+/* Destination resource configuration data for the SC7180 SoC */
+static const struct ipa_resource ipa_resource_dst[] = {
+	[IPA_RESOURCE_TYPE_DST_DATA_SECTORS] = {
+		.limits[IPA_RSRC_GROUP_DST_UL_DL_DPL] = {
+			.min = 3,	.max = 3,
 		},
 	},
-	{
-		.type = IPA_RESOURCE_TYPE_DST_DPS_DMARS,
-		.limits[0] = {
-			.min = 1,
-			.max = 63,
+	[IPA_RESOURCE_TYPE_DST_DPS_DMARS] = {
+		.limits[IPA_RSRC_GROUP_DST_UL_DL_DPL] = {
+			.min = 1,	.max = 63,
 		},
 	},
 };
 
 /* Resource configuration for the SC7180 SoC. */
 static const struct ipa_resource_data ipa_resource_data = {
+	.rsrc_group_src_count	= IPA_RSRC_GROUP_SRC_COUNT,
+	.rsrc_group_dst_count	= IPA_RSRC_GROUP_DST_COUNT,
 	.resource_src_count	= ARRAY_SIZE(ipa_resource_src),
 	.resource_src		= ipa_resource_src,
 	.resource_dst_count	= ARRAY_SIZE(ipa_resource_dst),
@@ -206,7 +227,7 @@ static const struct ipa_mem ipa_mem_local_data[] = {
 	[IPA_MEM_UC_INFO] = {
 		.offset		= 0x0080,
 		.size		= 0x0200,
-		.canary_count	= 2,
+		.canary_count	= 0,
 	},
 	[IPA_MEM_V4_FILTER_HASHED] = {
 		.offset		= 0x0288,
@@ -253,11 +274,6 @@ static const struct ipa_mem ipa_mem_local_data[] = {
 		.size		= 0x0140,
 		.canary_count	= 2,
 	},
-	[IPA_MEM_AP_HEADER] = {
-		.offset		= 0x05e8,
-		.size		= 0x0000,
-		.canary_count	= 0,
-	},
 	[IPA_MEM_MODEM_PROC_CTX] = {
 		.offset		= 0x05f0,
 		.size		= 0x0200,
@@ -273,7 +289,7 @@ static const struct ipa_mem ipa_mem_local_data[] = {
 		.size		= 0x0050,
 		.canary_count	= 2,
 	},
-	[IPA_MEM_STATS_QUOTA] = {
+	[IPA_MEM_STATS_QUOTA_MODEM] = {
 		.offset		= 0x0a50,
 		.size		= 0x0060,
 		.canary_count	= 2,
@@ -281,11 +297,6 @@ static const struct ipa_mem ipa_mem_local_data[] = {
 	[IPA_MEM_STATS_TETHERING] = {
 		.offset		= 0x0ab0,
 		.size		= 0x0140,
-		.canary_count	= 0,
-	},
-	[IPA_MEM_STATS_DROP] = {
-		.offset		= 0x0bf0,
-		.size		= 0,
 		.canary_count	= 0,
 	},
 	[IPA_MEM_MODEM] = {
@@ -300,7 +311,7 @@ static const struct ipa_mem ipa_mem_local_data[] = {
 	},
 };
 
-static struct ipa_mem_data ipa_mem_data = {
+static const struct ipa_mem_data ipa_mem_data = {
 	.local_count	= ARRAY_SIZE(ipa_mem_local_data),
 	.local		= ipa_mem_local_data,
 	.imem_addr	= 0x146a8000,
@@ -310,7 +321,7 @@ static struct ipa_mem_data ipa_mem_data = {
 };
 
 /* Interconnect bandwidths are in 1000 byte/second units */
-static struct ipa_interconnect_data ipa_interconnect_data[] = {
+static const struct ipa_interconnect_data ipa_interconnect_data[] = {
 	{
 		.name			= "memory",
 		.peak_bandwidth		= 465000,	/* 465 MBps */
@@ -329,7 +340,7 @@ static struct ipa_interconnect_data ipa_interconnect_data[] = {
 	},
 };
 
-static struct ipa_clock_data ipa_clock_data = {
+static const struct ipa_clock_data ipa_clock_data = {
 	.core_clock_rate	= 100 * 1000 * 1000,	/* Hz */
 	.interconnect_count	= ARRAY_SIZE(ipa_interconnect_data),
 	.interconnect_data	= ipa_interconnect_data,
@@ -338,6 +349,8 @@ static struct ipa_clock_data ipa_clock_data = {
 /* Configuration data for the SC7180 SoC. */
 const struct ipa_data ipa_data_sc7180 = {
 	.version	= IPA_VERSION_4_2,
+	.qsb_count	= ARRAY_SIZE(ipa_qsb_data),
+	.qsb_data	= ipa_qsb_data,
 	.endpoint_count	= ARRAY_SIZE(ipa_gsi_endpoint_data),
 	.endpoint_data	= ipa_gsi_endpoint_data,
 	.resource_data	= &ipa_resource_data,
