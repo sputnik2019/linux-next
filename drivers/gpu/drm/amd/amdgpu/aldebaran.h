@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Advanced Micro Devices, Inc.
+ * Copyright 2021 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -19,31 +19,14 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  *
- * Authors: AMD
- *
  */
 
-#ifndef __VG_CLK_MGR_H__
-#define __VG_CLK_MGR_H__
-#include "clk_mgr_internal.h"
+#ifndef __ALDEBARAN_H__
+#define __ALDEBARAN_H__
 
-struct watermarks;
+#include "amdgpu.h"
 
-struct smu_watermark_set {
-	struct watermarks *wm_set;
-	union large_integer mc_address;
-};
+int aldebaran_reset_init(struct amdgpu_device *adev);
+int aldebaran_reset_fini(struct amdgpu_device *adev);
 
-struct clk_mgr_vgh {
-	struct clk_mgr_internal base;
-	struct smu_watermark_set smu_wm_set;
-};
-
-void vg_clk_mgr_construct(struct dc_context *ctx,
-		struct clk_mgr_vgh *clk_mgr,
-		struct pp_smu_funcs *pp_smu,
-		struct dccg *dccg);
-
-void vg_clk_mgr_destroy(struct clk_mgr_internal *clk_mgr);
-
-#endif //__VG_CLK_MGR_H__
+#endif
