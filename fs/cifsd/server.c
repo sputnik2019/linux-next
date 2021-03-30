@@ -95,7 +95,7 @@ static inline int check_conn_state(struct ksmbd_work *work)
 	struct smb_hdr *rsp_hdr;
 
 	if (ksmbd_conn_exiting(work) || ksmbd_conn_need_reconnect(work)) {
-		rsp_hdr = RESPONSE_BUF(work);
+		rsp_hdr = work->response_buf;
 		rsp_hdr->Status.CifsError = STATUS_CONNECTION_DISCONNECTED;
 		return 1;
 	}
@@ -105,9 +105,8 @@ static inline int check_conn_state(struct ksmbd_work *work)
 #define TCP_HANDLER_CONTINUE	0
 #define TCP_HANDLER_ABORT	1
 
-static int __process_request(struct ksmbd_work *work,
-			     struct ksmbd_conn *conn,
-			     uint16_t *cmd)
+static int __process_request(struct ksmbd_work *work, struct ksmbd_conn *conn,
+		uint16_t *cmd)
 {
 	struct smb_version_cmds *cmds;
 	uint16_t command;
@@ -160,16 +159,16 @@ andx_again:
 }
 
 static void __handle_ksmbd_work(struct ksmbd_work *work,
-				struct ksmbd_conn *conn)
+		struct ksmbd_conn *conn)
 {
-	uint16_t command = 0;
+	u16 command = 0;
 	int rc;
 
 	if (conn->ops->allocate_rsp_buf(work))
 		return;
 
 	if (conn->ops->is_transform_hdr &&
-		conn->ops->is_transform_hdr(REQUEST_BUF(work))) {
+	    conn->ops->is_transform_hdr(work->request_buf)) {
 		rc = conn->ops->decrypt_req(work);
 		if (rc < 0) {
 			conn->ops->set_rsp_status(work, STATUS_DATA_ERROR);
@@ -224,7 +223,7 @@ static void __handle_ksmbd_work(struct ksmbd_work *work,
 		}
 
 		if (work->sess && (work->sess->sign ||
-		     smb3_11_final_sess_setup_resp(work) ||
+		    smb3_11_final_sess_setup_resp(work) ||
 		     conn->ops->is_sign_req(work, command)))
 			conn->ops->set_sign_rsp(work);
 	} while (is_chained_smb2_message(work));
@@ -235,7 +234,7 @@ static void __handle_ksmbd_work(struct ksmbd_work *work,
 send:
 	smb3_preauth_hash_rsp(work);
 	if (work->sess && work->sess->enc && work->encrypted &&
-		conn->ops->encrypt_resp) {
+	    conn->ops->encrypt_resp) {
 		rc = conn->ops->encrypt_resp(work);
 		if (rc < 0) {
 			conn->ops->set_rsp_status(work, STATUS_DATA_ERROR);
@@ -416,9 +415,8 @@ int server_queue_ctrl_reset_work(void)
 	return __queue_ctrl_work(SERVER_CTRL_TYPE_RESET);
 }
 
-static ssize_t stats_show(struct class *class,
-			  struct class_attribute *attr,
-			  char *buf)
+static ssize_t stats_show(struct class *class, struct class_attribute *attr,
+		char *buf)
 {
 	/*
 	 * Inc this each time you change stats output format,
@@ -443,9 +441,8 @@ static ssize_t stats_show(struct class *class,
 }
 
 static ssize_t kill_server_store(struct class *class,
-				 struct class_attribute *attr,
-				 const char *buf,
-				 size_t len)
+		struct class_attribute *attr, const char *buf,
+		size_t len)
 {
 	if (!sysfs_streq(buf, "hard"))
 		return len;
@@ -464,8 +461,7 @@ static const char * const debug_type_strings[] = {"smb", "auth", "vfs",
 						"oplock", "ipc", "conn",
 						"rdma"};
 
-static ssize_t debug_show(struct class *class,
-		struct class_attribute *attr,
+static ssize_t debug_show(struct class *class, struct class_attribute *attr,
 		char *buf)
 {
 	ssize_t sz = 0;
@@ -484,16 +480,13 @@ static ssize_t debug_show(struct class *class,
 					debug_type_strings[i]);
 		}
 		sz += pos;
-
 	}
 	sz += scnprintf(buf + sz, PAGE_SIZE - sz, "\n");
 	return sz;
 }
 
-static ssize_t debug_store(struct class *class,
-		struct class_attribute *attr,
-		const char *buf,
-		size_t len)
+static ssize_t debug_store(struct class *class, struct class_attribute *attr,
+		const char *buf, size_t len)
 {
 	int i;
 
@@ -567,39 +560,52 @@ static int __init ksmbd_server_init(void)
 
 	ret = server_conf_init();
 	if (ret)
-		return ret;
+		goto err_unregister;
 
 	ret = ksmbd_init_buffer_pools();
 	if (ret)
-		return ret;
+		goto err_unregister;
 
 	ret = ksmbd_init_session_table();
 	if (ret)
-		goto error;
+		goto err_destroy_pools;
 
 	ret = ksmbd_ipc_init();
 	if (ret)
-		goto error;
+		goto err_free_session_table;
 
 	ret = ksmbd_init_global_file_table();
 	if (ret)
-		goto error;
+		goto err_ipc_release;
 
 	ret = ksmbd_inode_hash_init();
 	if (ret)
-		goto error;
+		goto err_destroy_file_table;
 
 	ret = ksmbd_crypto_create();
 	if (ret)
-		goto error;
+		goto err_release_inode_hash;
 
 	ret = ksmbd_workqueue_init();
 	if (ret)
-		goto error;
+		goto err_crypto_destroy;
 	return 0;
 
-error:
-	ksmbd_server_shutdown();
+err_crypto_destroy:
+	ksmbd_crypto_destroy();
+err_release_inode_hash:
+	ksmbd_release_inode_hash();
+err_destroy_file_table:
+	ksmbd_free_global_file_table();
+err_ipc_release:
+	ksmbd_ipc_release();
+err_free_session_table:
+	ksmbd_free_session_table();
+err_destroy_pools:
+	ksmbd_destroy_buffer_pools();
+err_unregister:
+	class_unregister(&ksmbd_control_class);
+
 	return ret;
 }
 

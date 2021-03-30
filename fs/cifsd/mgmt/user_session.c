@@ -101,7 +101,7 @@ int ksmbd_session_rpc_open(struct ksmbd_session *sess, char *rpc_name)
 	if (!method)
 		return -EINVAL;
 
-	entry = ksmbd_alloc(sizeof(struct ksmbd_session_rpc));
+	entry = kzalloc(sizeof(struct ksmbd_session_rpc), GFP_KERNEL);
 	if (!entry)
 		return -EINVAL;
 
@@ -266,7 +266,7 @@ static struct ksmbd_session *__session_create(int protocol)
 	struct ksmbd_session *sess;
 	int ret;
 
-	sess = ksmbd_alloc(sizeof(struct ksmbd_session));
+	sess = kzalloc(sizeof(struct ksmbd_session), GFP_KERNEL);
 	if (!sess)
 		return NULL;
 
@@ -298,9 +298,9 @@ static struct ksmbd_session *__session_create(int protocol)
 		goto error;
 
 	if (protocol == CIFDS_SESSION_FLAG_SMB2) {
-		down_read(&sessions_table_lock);
+		down_write(&sessions_table_lock);
 		hash_add(sessions_table, &sess->hlist, sess->id);
-		up_read(&sessions_table_lock);
+		up_write(&sessions_table_lock);
 	}
 	return sess;
 
