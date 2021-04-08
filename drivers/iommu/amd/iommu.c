@@ -290,15 +290,6 @@ static bool pci_iommuv2_capable(struct pci_dev *pdev)
 	return true;
 }
 
-static bool pdev_pri_erratum(struct pci_dev *pdev, u32 erratum)
-{
-	struct iommu_dev_data *dev_data;
-
-	dev_data = dev_iommu_priv_get(&pdev->dev);
-
-	return dev_data->errata & (1 << erratum) ? true : false;
-}
-
 /*
  * This function checks if the driver got a valid device from the caller to
  * avoid dereferencing invalid pointers.
@@ -1531,33 +1522,9 @@ static void pdev_iommuv2_disable(struct pci_dev *pdev)
 	pci_disable_pasid(pdev);
 }
 
-/* FIXME: Change generic reset-function to do the same */
-static int pri_reset_while_enabled(struct pci_dev *pdev)
-{
-	u16 control;
-	int pos;
-
-	pos = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_PRI);
-	if (!pos)
-		return -EINVAL;
-
-	pci_read_config_word(pdev, pos + PCI_PRI_CTRL, &control);
-	control |= PCI_PRI_CTRL_RESET;
-	pci_write_config_word(pdev, pos + PCI_PRI_CTRL, control);
-
-	return 0;
-}
-
 static int pdev_iommuv2_enable(struct pci_dev *pdev)
 {
-	bool reset_enable;
-	int reqs, ret;
-
-	/* FIXME: Hardcode number of outstanding requests for now */
-	reqs = 32;
-	if (pdev_pri_erratum(pdev, AMD_PRI_DEV_ERRATUM_LIMIT_REQ_ONE))
-		reqs = 1;
-	reset_enable = pdev_pri_erratum(pdev, AMD_PRI_DEV_ERRATUM_ENABLE_RESET);
+	int ret;
 
 	/* Only allow access to user-accessible pages */
 	ret = pci_enable_pasid(pdev, 0);
@@ -1570,15 +1537,10 @@ static int pdev_iommuv2_enable(struct pci_dev *pdev)
 		goto out_err;
 
 	/* Enable PRI */
-	ret = pci_enable_pri(pdev, reqs);
+	/* FIXME: Hardcode number of outstanding requests for now */
+	ret = pci_enable_pri(pdev, 32);
 	if (ret)
 		goto out_err;
-
-	if (reset_enable) {
-		ret = pri_reset_while_enabled(pdev);
-		if (ret)
-			goto out_err;
-	}
 
 	ret = pci_enable_ats(pdev, PAGE_SHIFT);
 	if (ret)
@@ -1771,26 +1733,6 @@ static struct iommu_group *amd_iommu_device_group(struct device *dev)
 	return acpihid_device_group(dev);
 }
 
-static int amd_iommu_domain_get_attr(struct iommu_domain *domain,
-		enum iommu_attr attr, void *data)
-{
-	switch (domain->type) {
-	case IOMMU_DOMAIN_UNMANAGED:
-		return -ENODEV;
-	case IOMMU_DOMAIN_DMA:
-		switch (attr) {
-		case DOMAIN_ATTR_DMA_USE_FLUSH_QUEUE:
-			*(int *)data = !amd_iommu_unmap_flush;
-			return 0;
-		default:
-			return -ENODEV;
-		}
-		break;
-	default:
-		return -EINVAL;
-	}
-}
-
 /*****************************************************************************
  *
  * The next functions belong to the dma_ops mapping/unmapping code.
@@ -1855,7 +1797,7 @@ int __init amd_iommu_init_dma_ops(void)
 		pr_info("IO/TLB flush on unmap enabled\n");
 	else
 		pr_info("Lazy IO/TLB flushing enabled\n");
-
+	iommu_set_dma_strict(amd_iommu_unmap_flush);
 	return 0;
 
 }
@@ -2257,7 +2199,6 @@ const struct iommu_ops amd_iommu_ops = {
 	.release_device = amd_iommu_release_device,
 	.probe_finalize = amd_iommu_probe_finalize,
 	.device_group = amd_iommu_device_group,
-	.domain_get_attr = amd_iommu_domain_get_attr,
 	.get_resv_regions = amd_iommu_get_resv_regions,
 	.put_resv_regions = generic_iommu_put_resv_regions,
 	.is_attach_deferred = amd_iommu_is_attach_deferred,
@@ -2309,9 +2250,6 @@ int amd_iommu_domain_enable_v2(struct iommu_domain *dom, int pasids)
 	struct protection_domain *domain = to_pdomain(dom);
 	unsigned long flags;
 	int levels, ret;
-
-	if (pasids <= 0 || pasids > (PASID_MASK + 1))
-		return -EINVAL;
 
 	/* Number of GCR3 table levels required */
 	for (levels = 0; (pasids - 1) & ~0x1ff; pasids >>= 9)
@@ -2562,52 +2500,6 @@ int amd_iommu_complete_ppr(struct pci_dev *pdev, u32 pasid,
 	return iommu_queue_command(iommu, &cmd);
 }
 EXPORT_SYMBOL(amd_iommu_complete_ppr);
-
-struct iommu_domain *amd_iommu_get_v2_domain(struct pci_dev *pdev)
-{
-	struct protection_domain *pdomain;
-	struct iommu_dev_data *dev_data;
-	struct device *dev = &pdev->dev;
-	struct iommu_domain *io_domain;
-
-	if (!check_device(dev))
-		return NULL;
-
-	dev_data  = dev_iommu_priv_get(&pdev->dev);
-	pdomain   = dev_data->domain;
-	io_domain = iommu_get_domain_for_dev(dev);
-
-	if (pdomain == NULL && dev_data->defer_attach) {
-		dev_data->defer_attach = false;
-		pdomain = to_pdomain(io_domain);
-		attach_device(dev, pdomain);
-	}
-
-	if (pdomain == NULL)
-		return NULL;
-
-	if (io_domain->type != IOMMU_DOMAIN_DMA)
-		return NULL;
-
-	/* Only return IOMMUv2 domains */
-	if (!(pdomain->flags & PD_IOMMUV2_MASK))
-		return NULL;
-
-	return &pdomain->domain;
-}
-EXPORT_SYMBOL(amd_iommu_get_v2_domain);
-
-void amd_iommu_enable_device_erratum(struct pci_dev *pdev, u32 erratum)
-{
-	struct iommu_dev_data *dev_data;
-
-	if (!amd_iommu_v2_supported())
-		return;
-
-	dev_data = dev_iommu_priv_get(&pdev->dev);
-	dev_data->errata |= (1 << erratum);
-}
-EXPORT_SYMBOL(amd_iommu_enable_device_erratum);
 
 int amd_iommu_device_info(struct pci_dev *pdev,
                           struct amd_iommu_device_info *info)
