@@ -488,15 +488,16 @@ struct io_poll_iocb {
 	__poll_t			events;
 	bool				done;
 	bool				canceled;
+	struct wait_queue_entry		wait;
+};
+
+struct io_poll_update {
+	struct file			*file;
+	u64				old_user_data;
+	u64				new_user_data;
+	__poll_t			events;
 	bool				update_events;
 	bool				update_user_data;
-	union {
-		struct wait_queue_entry	wait;
-		struct {
-			u64		old_user_data;
-			u64		new_user_data;
-		};
-	};
 };
 
 struct io_poll_remove {
@@ -713,6 +714,7 @@ enum {
 	REQ_F_COMPLETE_INLINE_BIT,
 	REQ_F_REISSUE_BIT,
 	REQ_F_DONT_REISSUE_BIT,
+	REQ_F_POLL_UPDATE_BIT,
 	/* keep async read/write and isreg together and in order */
 	REQ_F_ASYNC_READ_BIT,
 	REQ_F_ASYNC_WRITE_BIT,
@@ -760,6 +762,8 @@ enum {
 	REQ_F_REISSUE		= BIT(REQ_F_REISSUE_BIT),
 	/* don't attempt request reissue, see io_rw_reissue() */
 	REQ_F_DONT_REISSUE	= BIT(REQ_F_DONT_REISSUE_BIT),
+	/* switches between poll and poll update */
+	REQ_F_POLL_UPDATE	= BIT(REQ_F_POLL_UPDATE_BIT),
 	/* supports async reads */
 	REQ_F_ASYNC_READ	= BIT(REQ_F_ASYNC_READ_BIT),
 	/* supports async writes */
@@ -789,6 +793,7 @@ struct io_kiocb {
 		struct file		*file;
 		struct io_rw		rw;
 		struct io_poll_iocb	poll;
+		struct io_poll_update	poll_update;
 		struct io_poll_remove	poll_remove;
 		struct io_accept	accept;
 		struct io_sync		sync;
@@ -1262,12 +1267,11 @@ static void io_queue_async_work(struct io_kiocb *req)
 }
 
 static void io_kill_timeout(struct io_kiocb *req, int status)
+	__must_hold(&req->ctx->completion_lock)
 {
 	struct io_timeout_data *io = req->async_data;
-	int ret;
 
-	ret = hrtimer_try_to_cancel(&io->timer);
-	if (ret != -1) {
+	if (hrtimer_try_to_cancel(&io->timer) != -1) {
 		atomic_set(&req->ctx->cq_timeouts,
 			atomic_read(&req->ctx->cq_timeouts) + 1);
 		list_del_init(&req->timeout.list);
@@ -1509,32 +1513,28 @@ static bool io_cqring_event_overflow(struct io_kiocb *req, long res,
 				     unsigned int cflags)
 {
 	struct io_ring_ctx *ctx = req->ctx;
+	struct io_overflow_cqe *ocqe;
 
-	if (!atomic_read(&req->task->io_uring->in_idle)) {
-		struct io_overflow_cqe *ocqe;
-
-		ocqe = kmalloc(sizeof(*ocqe), GFP_ATOMIC | __GFP_ACCOUNT);
-		if (!ocqe)
-			goto overflow;
-		if (list_empty(&ctx->cq_overflow_list)) {
-			set_bit(0, &ctx->sq_check_overflow);
-			set_bit(0, &ctx->cq_check_overflow);
-			ctx->rings->sq_flags |= IORING_SQ_CQ_OVERFLOW;
-		}
-		ocqe->cqe.user_data = req->user_data;
-		ocqe->cqe.res = res;
-		ocqe->cqe.flags = cflags;
-		list_add_tail(&ocqe->list, &ctx->cq_overflow_list);
-		return true;
+	ocqe = kmalloc(sizeof(*ocqe), GFP_ATOMIC | __GFP_ACCOUNT);
+	if (!ocqe) {
+		/*
+		 * If we're in ring overflow flush mode, or in task cancel mode,
+		 * or cannot allocate an overflow entry, then we need to drop it
+		 * on the floor.
+		 */
+		WRITE_ONCE(ctx->rings->cq_overflow, ++ctx->cached_cq_overflow);
+		return false;
 	}
-overflow:
-	/*
-	 * If we're in ring overflow flush mode, or in task cancel mode,
-	 * or cannot allocate an overflow entry, then we need to drop it
-	 * on the floor.
-	 */
-	WRITE_ONCE(ctx->rings->cq_overflow, ++ctx->cached_cq_overflow);
-	return false;
+	if (list_empty(&ctx->cq_overflow_list)) {
+		set_bit(0, &ctx->sq_check_overflow);
+		set_bit(0, &ctx->cq_check_overflow);
+		ctx->rings->sq_flags |= IORING_SQ_CQ_OVERFLOW;
+	}
+	ocqe->cqe.user_data = req->user_data;
+	ocqe->cqe.res = res;
+	ocqe->cqe.flags = cflags;
+	list_add_tail(&ocqe->list, &ctx->cq_overflow_list);
+	return true;
 }
 
 static inline bool __io_cqring_fill_event(struct io_kiocb *req, long res,
@@ -1784,12 +1784,10 @@ static bool io_kill_linked_timeout(struct io_kiocb *req)
 	 */
 	if (link && (link->flags & REQ_F_LTIMEOUT_ACTIVE)) {
 		struct io_timeout_data *io = link->async_data;
-		int ret;
 
 		io_remove_next_linked(req);
 		link->timeout.head = NULL;
-		ret = hrtimer_try_to_cancel(&io->timer);
-		if (ret != -1) {
+		if (hrtimer_try_to_cancel(&io->timer) != -1) {
 			io_cqring_fill_event(link, -ECANCELED, 0);
 			io_put_req_deferred(link, 1);
 			return true;
@@ -2332,27 +2330,6 @@ static int io_do_iopoll(struct io_ring_ctx *ctx, unsigned int *nr_events,
 }
 
 /*
- * Poll for a minimum of 'min' events. Note that if min == 0 we consider that a
- * non-spinning poll check - we'll still enter the driver poll loop, but only
- * as a non-spinning completion check.
- */
-static int io_iopoll_getevents(struct io_ring_ctx *ctx, unsigned int *nr_events,
-				long min)
-{
-	while (!list_empty(&ctx->iopoll_list) && !need_resched()) {
-		int ret;
-
-		ret = io_do_iopoll(ctx, nr_events, min);
-		if (ret < 0)
-			return ret;
-		if (*nr_events >= min)
-			return 0;
-	}
-
-	return 1;
-}
-
-/*
  * We can't just wait for polled events to come to us, we have to actively
  * find and complete them.
  */
@@ -2387,7 +2364,7 @@ static void io_iopoll_try_reap_events(struct io_ring_ctx *ctx)
 static int io_iopoll_check(struct io_ring_ctx *ctx, long min)
 {
 	unsigned int nr_events = 0;
-	int iters = 0, ret = 0;
+	int ret = 0;
 
 	/*
 	 * We disallow the app entering submit/complete with polling, but we
@@ -2395,17 +2372,16 @@ static int io_iopoll_check(struct io_ring_ctx *ctx, long min)
 	 * that got punted to a workqueue.
 	 */
 	mutex_lock(&ctx->uring_lock);
+	/*
+	 * Don't enter poll loop if we already have events pending.
+	 * If we do, we can potentially be spinning for commands that
+	 * already triggered a CQE (eg in error).
+	 */
+	if (test_bit(0, &ctx->cq_check_overflow))
+		__io_cqring_overflow_flush(ctx, false);
+	if (io_cqring_events(ctx))
+		goto out;
 	do {
-		/*
-		 * Don't enter poll loop if we already have events pending.
-		 * If we do, we can potentially be spinning for commands that
-		 * already triggered a CQE (eg in error).
-		 */
-		if (test_bit(0, &ctx->cq_check_overflow))
-			__io_cqring_overflow_flush(ctx, false);
-		if (io_cqring_events(ctx))
-			break;
-
 		/*
 		 * If a submit got punted to a workqueue, we can have the
 		 * application entering polling for a command before it gets
@@ -2416,18 +2392,17 @@ static int io_iopoll_check(struct io_ring_ctx *ctx, long min)
 		 * forever, while the workqueue is stuck trying to acquire the
 		 * very same mutex.
 		 */
-		if (!(++iters & 7)) {
+		if (list_empty(&ctx->iopoll_list)) {
 			mutex_unlock(&ctx->uring_lock);
 			io_run_task_work();
 			mutex_lock(&ctx->uring_lock);
+
+			if (list_empty(&ctx->iopoll_list))
+				break;
 		}
-
-		ret = io_iopoll_getevents(ctx, &nr_events, min);
-		if (ret <= 0)
-			break;
-		ret = 0;
-	} while (min && !nr_events && !need_resched());
-
+		ret = io_do_iopoll(ctx, &nr_events, min);
+	} while (!ret && nr_events < min && !need_resched());
+out:
 	mutex_unlock(&ctx->uring_lock);
 	return ret;
 }
@@ -2538,7 +2513,7 @@ static void io_complete_rw_iopoll(struct kiocb *kiocb, long res, long res2)
 /*
  * After the iocb has been issued, it's safe to be found on the poll list.
  * Adding the kiocb to the list AFTER submission ensures that we don't
- * find it from a io_iopoll_getevents() thread before the issuer is done
+ * find it from a io_do_iopoll() thread before the issuer is done
  * accessing the kiocb cookie.
  */
 static void io_iopoll_req_issued(struct io_kiocb *req, bool in_async)
@@ -4984,7 +4959,6 @@ static void io_init_poll_iocb(struct io_poll_iocb *poll, __poll_t events,
 	poll->head = NULL;
 	poll->done = false;
 	poll->canceled = false;
-	poll->update_events = poll->update_user_data = false;
 #define IO_POLL_UNMASK	(EPOLLERR|EPOLLHUP|EPOLLNVAL|EPOLLRDHUP)
 	/* mask in events that we always want/need */
 	poll->events = events | IO_POLL_UNMASK;
@@ -5218,21 +5192,16 @@ static bool io_poll_remove_waitqs(struct io_kiocb *req)
 	bool do_complete;
 
 	io_poll_remove_double(req);
+	do_complete = __io_poll_remove_one(req, io_poll_get_single(req), true);
 
-	if (req->opcode == IORING_OP_POLL_ADD) {
-		do_complete = __io_poll_remove_one(req, &req->poll, true);
-	} else {
+	if (req->opcode != IORING_OP_POLL_ADD && do_complete) {
 		struct async_poll *apoll = req->apoll;
 
 		/* non-poll requests have submit ref still */
-		do_complete = __io_poll_remove_one(req, &apoll->poll, true);
-		if (do_complete) {
-			req_ref_put(req);
-			kfree(apoll->double_poll);
-			kfree(apoll);
-		}
+		req_ref_put(req);
+		kfree(apoll->double_poll);
+		kfree(apoll);
 	}
-
 	return do_complete;
 }
 
@@ -5361,7 +5330,6 @@ static void io_poll_queue_proc(struct file *file, struct wait_queue_head *head,
 
 static int io_poll_add_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
-	struct io_poll_iocb *poll = &req->poll;
 	u32 events, flags;
 
 	if (unlikely(req->ctx->flags & IORING_SETUP_IOPOLL))
@@ -5378,20 +5346,26 @@ static int io_poll_add_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe
 #endif
 	if (!(flags & IORING_POLL_ADD_MULTI))
 		events |= EPOLLONESHOT;
-	poll->update_events = poll->update_user_data = false;
-	if (flags & IORING_POLL_UPDATE_EVENTS) {
-		poll->update_events = true;
-		poll->old_user_data = READ_ONCE(sqe->addr);
-	}
-	if (flags & IORING_POLL_UPDATE_USER_DATA) {
-		poll->update_user_data = true;
-		poll->new_user_data = READ_ONCE(sqe->off);
-	}
-	if (!(poll->update_events || poll->update_user_data) &&
-	     (sqe->off || sqe->addr))
-		return -EINVAL;
-	poll->events = demangle_poll(events) |
+	events = demangle_poll(events) |
 				(events & (EPOLLEXCLUSIVE|EPOLLONESHOT));
+
+	if (flags & (IORING_POLL_UPDATE_EVENTS|IORING_POLL_UPDATE_USER_DATA)) {
+		struct io_poll_update *poll_upd = &req->poll_update;
+
+		req->flags |= REQ_F_POLL_UPDATE;
+		poll_upd->events = events;
+		poll_upd->old_user_data = READ_ONCE(sqe->addr);
+		poll_upd->update_events = flags & IORING_POLL_UPDATE_EVENTS;
+		poll_upd->update_user_data = flags & IORING_POLL_UPDATE_USER_DATA;
+		if (poll_upd->update_user_data)
+			poll_upd->new_user_data = READ_ONCE(sqe->off);
+	} else {
+		struct io_poll_iocb *poll = &req->poll;
+
+		poll->events = events;
+		if (sqe->off || sqe->addr)
+			return -EINVAL;
+	}
 	return 0;
 }
 
@@ -5429,7 +5403,7 @@ static int io_poll_update(struct io_kiocb *req)
 	int ret;
 
 	spin_lock_irq(&ctx->completion_lock);
-	preq = io_poll_find(ctx, req->poll.old_user_data);
+	preq = io_poll_find(ctx, req->poll_update.old_user_data);
 	if (!preq) {
 		ret = -ENOENT;
 		goto err;
@@ -5459,13 +5433,13 @@ err:
 		return 0;
 	}
 	/* only mask one event flags, keep behavior flags */
-	if (req->poll.update_events) {
+	if (req->poll_update.update_events) {
 		preq->poll.events &= ~0xffff;
-		preq->poll.events |= req->poll.events & 0xffff;
+		preq->poll.events |= req->poll_update.events & 0xffff;
 		preq->poll.events |= IO_POLL_UNMASK;
 	}
-	if (req->poll.update_user_data)
-		preq->user_data = req->poll.new_user_data;
+	if (req->poll_update.update_user_data)
+		preq->user_data = req->poll_update.new_user_data;
 
 	spin_unlock_irq(&ctx->completion_lock);
 
@@ -5484,7 +5458,7 @@ err:
 
 static int io_poll_add(struct io_kiocb *req, unsigned int issue_flags)
 {
-	if (!req->poll.update_events && !req->poll.update_user_data)
+	if (!(req->flags & REQ_F_POLL_UPDATE))
 		return __io_poll_add(req);
 	return io_poll_update(req);
 }
@@ -5518,21 +5492,18 @@ static struct io_kiocb *io_timeout_extract(struct io_ring_ctx *ctx,
 {
 	struct io_timeout_data *io;
 	struct io_kiocb *req;
-	int ret = -ENOENT;
+	bool found = false;
 
 	list_for_each_entry(req, &ctx->timeout_list, timeout.list) {
-		if (user_data == req->user_data) {
-			ret = 0;
+		found = user_data == req->user_data;
+		if (found)
 			break;
-		}
 	}
-
-	if (ret == -ENOENT)
-		return ERR_PTR(ret);
+	if (!found)
+		return ERR_PTR(-ENOENT);
 
 	io = req->async_data;
-	ret = hrtimer_try_to_cancel(&io->timer);
-	if (ret == -1)
+	if (hrtimer_try_to_cancel(&io->timer) == -1)
 		return ERR_PTR(-EALREADY);
 	list_del_init(&req->timeout.list);
 	return req;
@@ -7089,6 +7060,10 @@ static void __io_sqe_files_unregister(struct io_ring_ctx *ctx)
 			fput(file);
 	}
 #endif
+	io_free_file_tables(&ctx->file_table, ctx->nr_user_files);
+	kfree(ctx->file_data);
+	ctx->file_data = NULL;
+	ctx->nr_user_files = 0;
 }
 
 static inline void io_rsrc_ref_lock(struct io_ring_ctx *ctx)
@@ -7195,21 +7170,14 @@ static struct io_rsrc_data *io_rsrc_data_alloc(struct io_ring_ctx *ctx,
 
 static int io_sqe_files_unregister(struct io_ring_ctx *ctx)
 {
-	struct io_rsrc_data *data = ctx->file_data;
 	int ret;
 
-	if (!data)
+	if (!ctx->file_data)
 		return -ENXIO;
-	ret = io_rsrc_ref_quiesce(data, ctx);
-	if (ret)
-		return ret;
-
-	__io_sqe_files_unregister(ctx);
-	io_free_file_tables(&ctx->file_table, ctx->nr_user_files);
-	kfree(data);
-	ctx->file_data = NULL;
-	ctx->nr_user_files = 0;
-	return 0;
+	ret = io_rsrc_ref_quiesce(ctx->file_data, ctx);
+	if (!ret)
+		__io_sqe_files_unregister(ctx);
+	return ret;
 }
 
 static void io_sq_thread_unpark(struct io_sq_data *sqd)
@@ -7659,7 +7627,7 @@ static int io_sqe_files_register(struct io_ring_ctx *ctx, void __user *arg,
 
 	ret = io_sqe_files_scm(ctx);
 	if (ret) {
-		io_sqe_files_unregister(ctx);
+		__io_sqe_files_unregister(ctx);
 		return ret;
 	}
 
@@ -8460,7 +8428,11 @@ static void io_ring_ctx_free(struct io_ring_ctx *ctx)
 	}
 
 	mutex_lock(&ctx->uring_lock);
-	io_sqe_files_unregister(ctx);
+	if (ctx->file_data) {
+		if (!atomic_dec_and_test(&ctx->file_data->refs))
+			wait_for_completion(&ctx->file_data->done);
+		__io_sqe_files_unregister(ctx);
+	}
 	if (ctx->rings)
 		__io_cqring_overflow_flush(ctx, true);
 	mutex_unlock(&ctx->uring_lock);
