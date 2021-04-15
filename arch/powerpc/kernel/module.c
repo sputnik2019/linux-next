@@ -110,7 +110,9 @@ void *module_alloc(unsigned long size)
 {
 	unsigned long start = VMALLOC_START;
 	unsigned long end = VMALLOC_END;
+#ifdef MODULES_VADDR
 	unsigned long limit = (unsigned long)_etext - SZ_32M;
+#endif
 	void *ptr = NULL;
 
 #ifdef MODULES_VADDR
