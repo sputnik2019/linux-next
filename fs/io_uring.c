@@ -1601,8 +1601,7 @@ static void io_req_complete_post(struct io_kiocb *req, long res,
 static void io_req_complete_state(struct io_kiocb *req, long res,
 				  unsigned int cflags)
 {
-	if (req->flags & (REQ_F_NEED_CLEANUP | REQ_F_BUFFER_SELECTED))
-		io_clean_op(req);
+	io_clean_op(req);
 	req->result = res;
 	req->compl.cflags = cflags;
 	req->flags |= REQ_F_COMPLETE_INLINE;
@@ -1713,16 +1712,12 @@ static void io_dismantle_req(struct io_kiocb *req)
 
 	if (!(flags & REQ_F_FIXED_FILE))
 		io_put_file(req->file);
-	if (flags & (REQ_F_NEED_CLEANUP | REQ_F_BUFFER_SELECTED |
-		     REQ_F_INFLIGHT)) {
-		io_clean_op(req);
+	io_clean_op(req);
+	if (req->flags & REQ_F_INFLIGHT) {
+		struct io_uring_task *tctx = req->task->io_uring;
 
-		if (req->flags & REQ_F_INFLIGHT) {
-			struct io_uring_task *tctx = req->task->io_uring;
-
-			atomic_dec(&tctx->inflight_tracked);
-			req->flags &= ~REQ_F_INFLIGHT;
-		}
+		atomic_dec(&tctx->inflight_tracked);
+		req->flags &= ~REQ_F_INFLIGHT;
 	}
 	if (req->fixed_rsrc_refs)
 		percpu_ref_put(req->fixed_rsrc_refs);
@@ -5996,6 +5991,8 @@ static int io_req_defer(struct io_kiocb *req)
 
 static void io_clean_op(struct io_kiocb *req)
 {
+	if (!(req->flags & (REQ_F_BUFFER_SELECTED | REQ_F_NEED_CLEANUP)))
+		return;
 	if (req->flags & REQ_F_BUFFER_SELECTED) {
 		switch (req->opcode) {
 		case IORING_OP_READV:
