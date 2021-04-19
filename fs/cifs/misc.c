@@ -734,6 +734,24 @@ cifs_close_deferred_file(struct cifsInodeInfo *cifs_inode)
 	}
 }
 
+void
+cifs_close_all_deferred_files(struct cifs_tcon *tcon)
+{
+	struct cifsFileInfo *cfile;
+	struct cifsInodeInfo *cinode;
+	struct list_head *tmp;
+	struct cifs_deferred_close *dclose;
+
+	list_for_each(tmp, &tcon->openFileList) {
+		cfile = list_entry(tmp, struct cifsFileInfo, tlist);
+		cinode = CIFS_I(d_inode(cfile->dentry));
+		spin_lock(&cinode->deferred_lock);
+		if (cifs_is_deferred_close(cfile, &dclose))
+			mod_delayed_work(deferredclose_wq, &cfile->deferred, 0);
+		spin_unlock(&cinode->deferred_lock);
+	}
+}
+
 /* parses DFS refferal V3 structure
  * caller is responsible for freeing target_nodes
  * returns:

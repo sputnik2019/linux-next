@@ -4858,7 +4858,6 @@ oplock_break_ack:
 							     cinode);
 		cifs_dbg(FYI, "Oplock release rc = %d\n", rc);
 	}
-	_cifsFileInfo_put(cfile, false /* do not wait for ourself */, false);
 	/*
 	 * When oplock break is received and there are no active
 	 * file handles but cached, then set the flag oplock_break_received.
@@ -4871,6 +4870,7 @@ oplock_break_ack:
 		mod_delayed_work(deferredclose_wq, &cfile->deferred, 0);
 	}
 	spin_unlock(&CIFS_I(inode)->deferred_lock);
+	_cifsFileInfo_put(cfile, false /* do not wait for ourself */, false);
 	cifs_done_oplock_break(cinode);
 }
 
