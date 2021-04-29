@@ -925,6 +925,22 @@ static int hdcp_sink_capability_show(struct seq_file *m, void *data)
 	return 0;
 }
 #endif
+
+/*
+ * Returns whether the connected display is internal and not hotpluggable.
+ * Example usage: cat /sys/kernel/debug/dri/0/DP-1/internal_display
+ */
+static int internal_display_show(struct seq_file *m, void *data)
+{
+	struct drm_connector *connector = m->private;
+	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
+	struct dc_link *link = aconnector->dc_link;
+
+	seq_printf(m, "Internal: %u\n", link->is_internal_display);
+
+	return 0;
+}
+
 /* function description
  *
  * generic SDP message access for testing
@@ -2369,6 +2385,7 @@ DEFINE_SHOW_ATTRIBUTE(dp_lttpr_status);
 #ifdef CONFIG_DRM_AMD_DC_HDCP
 DEFINE_SHOW_ATTRIBUTE(hdcp_sink_capability);
 #endif
+DEFINE_SHOW_ATTRIBUTE(internal_display);
 
 static const struct file_operations dp_dsc_clock_en_debugfs_fops = {
 	.owner = THIS_MODULE,
@@ -2600,7 +2617,8 @@ static const struct {
 } connector_debugfs_entries[] = {
 		{"force_yuv420_output", &force_yuv420_output_fops},
 		{"output_bpc", &output_bpc_fops},
-		{"trigger_hotplug", &trigger_hotplug_debugfs_fops}
+		{"trigger_hotplug", &trigger_hotplug_debugfs_fops},
+		{"internal_display", &internal_display_fops}
 };
 
 void connector_debugfs_init(struct amdgpu_dm_connector *connector)
@@ -3012,7 +3030,7 @@ static int trigger_hpd_mst_set(void *data, u64 val)
 			if (!aconnector->dc_link)
 				continue;
 
-			if (!(aconnector->port && &aconnector->mst_port->mst_mgr))
+			if (!aconnector->mst_port)
 				continue;
 
 			link = aconnector->dc_link;
@@ -3076,6 +3094,37 @@ static int force_timing_sync_get(void *data, u64 *val)
 
 DEFINE_DEBUGFS_ATTRIBUTE(force_timing_sync_ops, force_timing_sync_get,
 			 force_timing_sync_set, "%llu\n");
+
+
+/*
+ * Disables all HPD and HPD RX interrupt handling in the
+ * driver when set to 1. Default is 0.
+ */
+static int disable_hpd_set(void *data, u64 val)
+{
+	struct amdgpu_device *adev = data;
+
+	adev->dm.disable_hpd_irq = (bool)val;
+
+	return 0;
+}
+
+
+/*
+ * Returns 1 if HPD and HPRX interrupt handling is disabled,
+ * 0 otherwise.
+ */
+static int disable_hpd_get(void *data, u64 *val)
+{
+	struct amdgpu_device *adev = data;
+
+	*val = adev->dm.disable_hpd_irq;
+
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(disable_hpd_ops, disable_hpd_get,
+			 disable_hpd_set, "%llu\n");
 
 /*
  * Sets the DC visual confirm debug option from the given string.
@@ -3213,4 +3262,8 @@ void dtn_debugfs_init(struct amdgpu_device *adev)
 
 	debugfs_create_file_unsafe("amdgpu_dm_dcc_en", 0644, root, adev,
 				   &dcc_en_bits_fops);
+
+	debugfs_create_file_unsafe("amdgpu_dm_disable_hpd", 0644, root, adev,
+				   &disable_hpd_ops);
+
 }
