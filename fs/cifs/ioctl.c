@@ -164,10 +164,61 @@ static long smb_mnt_get_fsinfo(unsigned int xid, struct cifs_tcon *tcon,
 	return rc;
 }
 
+static int cifs_shutdown(struct super_block *sb, unsigned long arg)
+{
+	struct cifs_sb_info *sbi = CIFS_SB(sb);
+	__u32 flags;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (get_user(flags, (__u32 __user *)arg))
+		return -EFAULT;
+
+	if (flags > CIFS_GOING_FLAGS_NOLOGFLUSH)
+		return -EINVAL;
+
+	if (cifs_forced_shutdown(sbi))
+		return 0;
+
+	cifs_dbg(VFS, "shut down requested (%d)", flags);
+/*	trace_cifs_shutdown(sb, flags);*/
+
+	/*
+	 * see:
+	 *   https://man7.org/linux/man-pages/man2/ioctl_xfs_goingdown.2.html
+	 * for more information and description of original intent of the flags
+	 */
+	switch (flags) {
+	/*
+	 * We could add support later for default flag which requires:
+	 *     "Flush all dirty data and metadata to disk"
+	 * would need to call syncfs or equivalent to flush page cache for
+	 * the mount and then issue fsync to server (if nostrictsync not set)
+	 */
+	case CIFS_GOING_FLAGS_DEFAULT:
+		cifs_dbg(FYI, "shutdown with default flag not supported\n");
+		return -EINVAL;
+	/*
+	 * FLAGS_LOGFLUSH is easy since it asks to write out metadata (not
+	 * data) but metadata writes are not cached on the client, so can treat
+	 * it similarly to NOLOGFLUSH
+	 */
+	case CIFS_GOING_FLAGS_LOGFLUSH:
+	case CIFS_GOING_FLAGS_NOLOGFLUSH:
+		sbi->mnt_cifs_flags |= CIFS_MOUNT_SHUTDOWN;
+		return 0;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
 long cifs_ioctl(struct file *filep, unsigned int command, unsigned long arg)
 {
 	struct inode *inode = file_inode(filep);
 	struct smb3_key_debug_info pkey_inf;
+	struct smb3_full_key_debug_info pfull_key_inf;
 	int rc = -ENOTTY; /* strange error - but the precedent */
 	unsigned int xid;
 	struct cifsFileInfo *pSMBFile = filep->private_data;
@@ -304,6 +355,38 @@ long cifs_ioctl(struct file *filep, unsigned int command, unsigned long arg)
 			else
 				rc = 0;
 			break;
+		/*
+		 * Dump full key (32 bytes instead of 16 bytes) is
+		 * needed if GCM256 (stronger encryption) negotiated
+		 */
+		case CIFS_DUMP_FULL_KEY:
+			if (pSMBFile == NULL)
+				break;
+			if (!capable(CAP_SYS_ADMIN)) {
+				rc = -EACCES;
+				break;
+			}
+
+			tcon = tlink_tcon(pSMBFile->tlink);
+			if (!smb3_encryption_required(tcon)) {
+				rc = -EOPNOTSUPP;
+				break;
+			}
+			pfull_key_inf.cipher_type =
+				le16_to_cpu(tcon->ses->server->cipher_type);
+			pfull_key_inf.Suid = tcon->ses->Suid;
+			memcpy(pfull_key_inf.auth_key, tcon->ses->auth_key.response,
+					16 /* SMB2_NTLMV2_SESSKEY_SIZE */);
+			memcpy(pfull_key_inf.smb3decryptionkey,
+			      tcon->ses->smb3decryptionkey, 32 /* SMB3_ENC_DEC_KEY_SIZE */);
+			memcpy(pfull_key_inf.smb3encryptionkey,
+			      tcon->ses->smb3encryptionkey, 32 /* SMB3_ENC_DEC_KEY_SIZE */);
+			if (copy_to_user((void __user *)arg, &pfull_key_inf,
+					sizeof(struct smb3_full_key_debug_info)))
+				rc = -EFAULT;
+			else
+				rc = 0;
+			break;
 		case CIFS_IOC_NOTIFY:
 			if (!S_ISDIR(inode->i_mode)) {
 				/* Notify can only be done on directories */
@@ -324,6 +407,9 @@ long cifs_ioctl(struct file *filep, unsigned int command, unsigned long arg)
 			} else
 				rc = -EOPNOTSUPP;
 			cifs_put_tlink(tlink);
+			break;
+		case CIFS_IOC_SHUTDOWN:
+			rc = cifs_shutdown(inode->i_sb, arg);
 			break;
 		default:
 			cifs_dbg(FYI, "unsupported ioctl\n");
