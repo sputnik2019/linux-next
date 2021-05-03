@@ -7942,7 +7942,7 @@ static blk_status_t btrfs_check_read_dio_bio(struct inode *inode,
 							bvec.bv_page, pgoff,
 							start,
 							start + sectorsize - 1,
-							io_bio->mirror_num,
+							io_bio->mirror_num, 1,
 							submit_dio_repair_bio);
 				if (status)
 					err = status;
