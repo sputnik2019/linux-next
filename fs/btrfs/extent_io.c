@@ -2381,13 +2381,6 @@ int clean_io_failure(struct btrfs_fs_info *fs_info,
 
 	BUG_ON(!failrec->this_mirror);
 
-	if (failrec->in_validation) {
-		/* there was no real error, just free the record */
-		btrfs_debug(fs_info,
-			"clean_io_failure: freeing dummy error at %llu",
-			failrec->start);
-		goto out;
-	}
 	if (sb_rdonly(fs_info->sb))
 		goto out;
 
@@ -2464,9 +2457,8 @@ static struct io_failure_record *btrfs_get_io_failure_record(struct inode *inode
 	failrec = get_state_failrec(failure_tree, start);
 	if (!IS_ERR(failrec)) {
 		btrfs_debug(fs_info,
-			"Get IO Failure Record: (found) logical=%llu, start=%llu, len=%llu, validation=%d",
-			failrec->logical, failrec->start, failrec->len,
-			failrec->in_validation);
+	"Get IO Failure Record: (found) logical=%llu, start=%llu, len=%llu",
+			failrec->logical, failrec->start, failrec->len);
 		/*
 		 * when data can be on disk more than twice, add to failrec here
 		 * (e.g. with a list for failed_mirror) to make
@@ -2484,7 +2476,6 @@ static struct io_failure_record *btrfs_get_io_failure_record(struct inode *inode
 	failrec->len = sectorsize;
 	failrec->this_mirror = 0;
 	failrec->bio_flags = 0;
-	failrec->in_validation = 0;
 
 	read_lock(&em_tree->lock);
 	em = lookup_extent_mapping(em_tree, start, failrec->len);
@@ -2535,7 +2526,7 @@ static struct io_failure_record *btrfs_get_io_failure_record(struct inode *inode
 	return failrec;
 }
 
-static bool btrfs_check_repairable(struct inode *inode, bool needs_validation,
+static bool btrfs_check_repairable(struct inode *inode,
 				   struct io_failure_record *failrec,
 				   int failed_mirror)
 {
@@ -2555,39 +2546,22 @@ static bool btrfs_check_repairable(struct inode *inode, bool needs_validation,
 		return false;
 	}
 
+	/* The failure record should only contain one sector */
+	ASSERT(failrec->len == fs_info->sectorsize);
+
 	/*
-	 * there are two premises:
-	 *	a) deliver good data to the caller
-	 *	b) correct the bad sectors on disk
+	 * There are two premises:
+	 * a) deliver good data to the caller
+	 * b) correct the bad sectors on disk
+	 *
+	 * Since we're only doing repair for one sector, we only need to get
+	 * a good copy of the failed sector and if we succeed, we have setup
+	 * everything for repair_io_failure to do the rest for us.
 	 */
-	if (needs_validation) {
-		/*
-		 * to fulfill b), we need to know the exact failing sectors, as
-		 * we don't want to rewrite any more than the failed ones. thus,
-		 * we need separate read requests for the failed bio
-		 *
-		 * if the following BUG_ON triggers, our validation request got
-		 * merged. we need separate requests for our algorithm to work.
-		 */
-		BUG_ON(failrec->in_validation);
-		failrec->in_validation = 1;
-		failrec->this_mirror = failed_mirror;
-	} else {
-		/*
-		 * we're ready to fulfill a) and b) alongside. get a good copy
-		 * of the failed sector and if we succeed, we have setup
-		 * everything for repair_io_failure to do the rest for us.
-		 */
-		if (failrec->in_validation) {
-			BUG_ON(failrec->this_mirror != failed_mirror);
-			failrec->in_validation = 0;
-			failrec->this_mirror = 0;
-		}
-		failrec->failed_mirror = failed_mirror;
+	failrec->failed_mirror = failed_mirror;
+	failrec->this_mirror++;
+	if (failrec->this_mirror == failed_mirror)
 		failrec->this_mirror++;
-		if (failrec->this_mirror == failed_mirror)
-			failrec->this_mirror++;
-	}
 
 	if (failrec->this_mirror > num_copies) {
 		btrfs_debug(fs_info,
@@ -2597,34 +2571,6 @@ static bool btrfs_check_repairable(struct inode *inode, bool needs_validation,
 	}
 
 	return true;
-}
-
-static bool btrfs_io_needs_validation(struct inode *inode, struct bio *bio)
-{
-	struct bio_vec *bvec;
-	u64 len = 0;
-	const u32 blocksize = inode->i_sb->s_blocksize;
-	int i;
-
-	/*
-	 * If bi_status is BLK_STS_OK, then this was a checksum error, not an
-	 * I/O error. In this case, we already know exactly which sector was
-	 * bad, so we don't need to validate.
-	 */
-	if (bio->bi_status == BLK_STS_OK)
-		return false;
-
-	/*
-	 * We're ensured we won't get cloned bio in end_bio_extent_readpage(),
-	 * thus we can get the length from the bvecs.
-	 */
-	ASSERT(!bio_flagged(bio, BIO_CLONED));
-	bio_for_each_bvec_all(bvec, bio, i) {
-		len += bvec->bv_len;
-		if (len > blocksize)
-			return true;
-	}
-	return false;
 }
 
 static int repair_one_sector(struct inode *inode,
@@ -2639,7 +2585,6 @@ static int repair_one_sector(struct inode *inode,
 	struct extent_io_tree *failure_tree = &BTRFS_I(inode)->io_failure_tree;
 	struct btrfs_io_bio *failed_io_bio = btrfs_io_bio(failed_bio);
 	const int icsum = bio_offset >> fs_info->sectorsize_bits;
-	bool need_validation;
 	struct bio *repair_bio;
 	struct btrfs_io_bio *repair_io_bio;
 	blk_status_t status;
@@ -2656,13 +2601,9 @@ static int repair_one_sector(struct inode *inode,
 	/*
 	 * We will only submit repair for one sector, thus we don't need
 	 * extra validation anymore.
-	 *
-	 * TODO: All those extra validation related code will be cleaned up
-	 * later.
 	 */
-	need_validation = false;
-	if (!btrfs_check_repairable(inode, need_validation, failrec,
-				    failed_mirror)) {
+
+	if (!btrfs_check_repairable(inode, failrec, failed_mirror)) {
 		free_io_failure(failure_tree, tree, failrec);
 		return -EIO;
 	}
@@ -2670,8 +2611,6 @@ static int repair_one_sector(struct inode *inode,
 	repair_bio = btrfs_io_bio_alloc(1);
 	repair_io_bio = btrfs_io_bio(repair_bio);
 	repair_bio->bi_opf = REQ_OP_READ;
-	if (need_validation)
-		repair_bio->bi_opf |= REQ_FAILFAST_DEV;
 	repair_bio->bi_end_io = failed_bio->bi_end_io;
 	repair_bio->bi_iter.bi_sector = failrec->logical >> 9;
 	repair_bio->bi_private = failed_bio->bi_private;
@@ -2689,8 +2628,8 @@ static int repair_one_sector(struct inode *inode,
 	repair_io_bio->iter = repair_bio->bi_iter;
 
 	btrfs_debug(btrfs_sb(inode->i_sb),
-"repair read error: submitting new read to mirror %d, in_validation=%d",
-		    failrec->this_mirror, failrec->in_validation);
+		    "repair read error: submitting new read to mirror %d",
+		    failrec->this_mirror);
 
 	status = submit_bio_hook(inode, repair_bio, failrec->this_mirror,
 				 failrec->bio_flags);
