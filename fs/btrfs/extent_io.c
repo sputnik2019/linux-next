@@ -2599,8 +2599,10 @@ static bool btrfs_check_repairable(struct inode *inode, bool needs_validation,
 
 static bool btrfs_io_needs_validation(struct inode *inode, struct bio *bio)
 {
+	struct bio_vec *bvec;
 	u64 len = 0;
 	const u32 blocksize = inode->i_sb->s_blocksize;
+	int i;
 
 	/*
 	 * If bi_status is BLK_STS_OK, then this was a checksum error, not an
@@ -2611,30 +2613,14 @@ static bool btrfs_io_needs_validation(struct inode *inode, struct bio *bio)
 		return false;
 
 	/*
-	 * We need to validate each sector individually if the failed I/O was
-	 * for multiple sectors.
-	 *
-	 * There are a few possible bios that can end up here:
-	 * 1. A buffered read bio, which is not cloned.
-	 * 2. A direct I/O read bio, which is cloned.
-	 * 3. A (buffered or direct) repair bio, which is not cloned.
-	 *
-	 * For cloned bios (case 2), we can get the size from
-	 * btrfs_io_bio->iter; for non-cloned bios (cases 1 and 3), we can get
-	 * it from the bvecs.
+	 * We're ensured we won't get cloned bio in end_bio_extent_readpage(),
+	 * thus we can get the length from the bvecs.
 	 */
-	if (bio_flagged(bio, BIO_CLONED)) {
-		if (btrfs_io_bio(bio)->iter.bi_size > blocksize)
+	ASSERT(!bio_flagged(bio, BIO_CLONED));
+	bio_for_each_bvec_all(bvec, bio, i) {
+		len += bvec->bv_len;
+		if (len > blocksize)
 			return true;
-	} else {
-		struct bio_vec *bvec;
-		int i;
-
-		bio_for_each_bvec_all(bvec, bio, i) {
-			len += bvec->bv_len;
-			if (len > blocksize)
-				return true;
-		}
 	}
 	return false;
 }
