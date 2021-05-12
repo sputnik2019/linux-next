@@ -400,8 +400,8 @@ config SECTION_MISMATCH_WARN_ONLY
 
 	  If unsure, say Y.
 
-config DEBUG_FORCE_FUNCTION_ALIGN_32B
-	bool "Force all function address 32B aligned" if EXPERT
+config DEBUG_FORCE_FUNCTION_ALIGN_64B
+	bool "Force all function address 64B aligned" if EXPERT
 	help
 	  There are cases that a commit from one domain changes the function
 	  address alignment of other domains, and cause magic performance
@@ -1796,6 +1796,12 @@ config IO_STRICT_DEVMEM
 	  If in doubt, say Y.
 
 menu "$(SRCARCH) Debugging"
+
+config DEBUG_AID_FOR_SYZBOT
+       bool "Additional debug code for syzbot"
+       default n
+       help
+         This option is intended for testing by syzbot.
 
 source "arch/$(SRCARCH)/Kconfig.debug"
 
