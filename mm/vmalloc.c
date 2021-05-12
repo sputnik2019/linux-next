@@ -2766,6 +2766,8 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 	unsigned long array_size;
 	unsigned int nr_small_pages = size >> PAGE_SHIFT;
 	unsigned int page_order;
+	struct page **pages;
+	unsigned int i;
 
 	array_size = (unsigned long)nr_small_pages * sizeof(struct page *);
 	gfp_mask |= __GFP_NOWARN;
@@ -2774,13 +2776,13 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 
 	/* Please note that the recursion is strictly bounded. */
 	if (array_size > PAGE_SIZE) {
-		area->pages = __vmalloc_node(array_size, 1, nested_gfp, node,
+		pages = __vmalloc_node(array_size, 1, nested_gfp, node,
 					area->caller);
 	} else {
-		area->pages = kmalloc_node(array_size, nested_gfp, node);
+		pages = kmalloc_node(array_size, nested_gfp, node);
 	}
 
-	if (!area->pages) {
+	if (!pages) {
 		free_vm_area(area);
 		warn_alloc(gfp_mask, NULL,
 			   "vmalloc size %lu allocation failure: "
@@ -2789,51 +2791,43 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 		return NULL;
 	}
 
+	area->pages = pages;
+	area->nr_pages = nr_small_pages;
 	set_vm_area_page_order(area, page_shift - PAGE_SHIFT);
+
 	page_order = vm_area_page_order(area);
 
-	if (!page_order) {
-		area->nr_pages = __alloc_pages_bulk(gfp_mask, node,
-			NULL, nr_small_pages, NULL, area->pages);
-	} else {
-		/*
-		 * Careful, we allocate and map page_order pages, but tracking is done
-		 * per PAGE_SIZE page so as to keep the vm_struct APIs independent of
-		 * the physical/mapped size.
-		 */
-		for (area->nr_pages = 0; area->nr_pages < nr_small_pages;
-				area->nr_pages += 1U << page_order) {
-			struct page *page;
-			int i;
+	/*
+	 * Careful, we allocate and map page_order pages, but tracking is done
+	 * per PAGE_SIZE page so as to keep the vm_struct APIs independent of
+	 * the physical/mapped size.
+	 */
+	for (i = 0; i < area->nr_pages; i += 1U << page_order) {
+		struct page *page;
+		int p;
 
-			/* Compound pages required for remap_vmalloc_page */
-			page = alloc_pages_node(node, gfp_mask | __GFP_COMP, page_order);
-			if (unlikely(!page))
-				break;
-
-			for (i = 0; i < (1U << page_order); i++)
-				area->pages[area->nr_pages + i] = page + i;
-
-			if (gfpflags_allow_blocking(gfp_mask))
-				cond_resched();
+		/* Compound pages required for remap_vmalloc_page */
+		page = alloc_pages_node(node, gfp_mask | __GFP_COMP, page_order);
+		if (unlikely(!page)) {
+			/* Successfully allocated i pages, free them in __vfree() */
+			area->nr_pages = i;
+			atomic_long_add(area->nr_pages, &nr_vmalloc_pages);
+			warn_alloc(gfp_mask, NULL,
+				   "vmalloc size %lu allocation failure: "
+				   "page order %u allocation failed",
+				   area->nr_pages * PAGE_SIZE, page_order);
+			goto fail;
 		}
-	}
 
+		for (p = 0; p < (1U << page_order); p++)
+			area->pages[i + p] = page + p;
+
+		if (gfpflags_allow_blocking(gfp_mask))
+			cond_resched();
+	}
 	atomic_long_add(area->nr_pages, &nr_vmalloc_pages);
 
-	/*
-	 * If not enough pages were obtained to accomplish an
-	 * allocation request, free them via __vfree() if any.
-	 */
-	if (area->nr_pages != nr_small_pages) {
-		warn_alloc(gfp_mask, NULL,
-			"vmalloc size %lu allocation failure: "
-			"page order %u allocation failed",
-			area->nr_pages * PAGE_SIZE, page_order);
-		goto fail;
-	}
-
-	if (vmap_pages_range(addr, addr + size, prot, area->pages, page_shift) < 0) {
+	if (vmap_pages_range(addr, addr + size, prot, pages, page_shift) < 0) {
 		warn_alloc(gfp_mask, NULL,
 			   "vmalloc size %lu allocation failure: "
 			   "failed to map pages",
