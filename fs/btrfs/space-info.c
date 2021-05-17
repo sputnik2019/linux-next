@@ -1248,7 +1248,9 @@ static void btrfs_async_reclaim_data_space(struct work_struct *work)
 	while (!space_info->full) {
 		flush_space(fs_info, space_info, U64_MAX, ALLOC_CHUNK_FORCE, false);
 		spin_lock(&space_info->lock);
-		if (list_empty(&space_info->tickets)) {
+		if (list_empty(&space_info->tickets) ||
+		    test_bit(BTRFS_FS_STATE_TRANS_ABORTED,
+			     &fs_info->fs_state)) {
 			space_info->flush = 0;
 			spin_unlock(&space_info->lock);
 			return;
