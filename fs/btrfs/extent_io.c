@@ -3266,19 +3266,13 @@ static int submit_extent_page(unsigned int opf,
 		wbc_account_cgroup_owner(wbc, page, io_size);
 	}
 	if (btrfs_is_zoned(fs_info) && bio_op(bio) == REQ_OP_ZONE_APPEND) {
-		struct extent_map *em;
-		struct map_lookup *map;
+		struct btrfs_device *device;
 
-		em = btrfs_get_chunk_map(fs_info, disk_bytenr, io_size);
-		if (IS_ERR(em))
-			return PTR_ERR(em);
+		device = btrfs_zoned_get_device(fs_info, disk_bytenr, io_size);
+		if (IS_ERR(device))
+			return PTR_ERR(device);
 
-		map = em->map_lookup;
-		/* We only support single profile for now */
-		ASSERT(map->num_stripes == 1);
-		btrfs_io_bio(bio)->device = map->stripes[0].dev;
-
-		free_extent_map(em);
+		btrfs_io_bio(bio)->device = device;
 	}
 
 	*bio_ret = bio;
@@ -3765,7 +3759,7 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 		/* Note that em_end from extent_map_end() is exclusive */
 		iosize = min(em_end, end + 1) - cur;
 
-		if (btrfs_use_zone_append(inode, em))
+		if (btrfs_use_zone_append(inode, em->block_start))
 			opf = REQ_OP_ZONE_APPEND;
 
 		free_extent_map(em);

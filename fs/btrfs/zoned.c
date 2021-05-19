@@ -1296,7 +1296,7 @@ void btrfs_free_redirty_list(struct btrfs_transaction *trans)
 	spin_unlock(&trans->releasing_ebs_lock);
 }
 
-bool btrfs_use_zone_append(struct btrfs_inode *inode, struct extent_map *em)
+bool btrfs_use_zone_append(struct btrfs_inode *inode, u64 start)
 {
 	struct btrfs_fs_info *fs_info = inode->root->fs_info;
 	struct btrfs_block_group *cache;
@@ -1311,7 +1311,7 @@ bool btrfs_use_zone_append(struct btrfs_inode *inode, struct extent_map *em)
 	if (!is_data_inode(&inode->vfs_inode))
 		return false;
 
-	cache = btrfs_lookup_block_group(fs_info, em->block_start);
+	cache = btrfs_lookup_block_group(fs_info, start);
 	ASSERT(cache);
 	if (!cache)
 		return false;
@@ -1519,4 +1519,25 @@ int btrfs_sync_zone_write_pointer(struct btrfs_device *tgt_dev, u64 logical,
 
 	length = wp - physical_pos;
 	return btrfs_zoned_issue_zeroout(tgt_dev, physical_pos, length);
+}
+
+struct btrfs_device *btrfs_zoned_get_device(struct btrfs_fs_info *fs_info,
+					    u64 logical, u64 length)
+{
+	struct btrfs_device *device;
+	struct extent_map *em;
+	struct map_lookup *map;
+
+	em = btrfs_get_chunk_map(fs_info, logical, length);
+	if (IS_ERR(em))
+		return ERR_CAST(em);
+
+	map = em->map_lookup;
+	/* We only support single profile for now */
+	ASSERT(map->num_stripes == 1);
+	device = map->stripes[0].dev;
+
+	free_extent_map(em);
+
+	return device;
 }
