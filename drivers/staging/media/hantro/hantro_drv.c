@@ -160,11 +160,9 @@ static void device_run(void *priv)
 	src = hantro_get_src_buf(ctx);
 	dst = hantro_get_dst_buf(ctx);
 
-	ret = pm_runtime_get_sync(ctx->dev->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(ctx->dev->dev);
+	ret = pm_runtime_resume_and_get(ctx->dev->dev);
+	if (ret < 0)
 		goto err_cancel_job;
-	}
 
 	ret = clk_bulk_enable(ctx->dev->variant->num_clocks, ctx->dev->clocks);
 	if (ret)
@@ -490,6 +488,9 @@ static const struct of_device_id of_hantro_match[] = {
 #ifdef CONFIG_VIDEO_HANTRO_IMX8M
 	{ .compatible = "nxp,imx8mq-vpu", .data = &imx8mq_vpu_variant, },
 #endif
+#ifdef CONFIG_VIDEO_HANTRO_SAMA5D4
+	{ .compatible = "microchip,sama5d4-vdec", .data = &sama5d4_vdec_variant, },
+#endif
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, of_hantro_match);
@@ -763,12 +764,23 @@ static int hantro_probe(struct platform_device *pdev)
 	if (!vpu->clocks)
 		return -ENOMEM;
 
-	for (i = 0; i < vpu->variant->num_clocks; i++)
-		vpu->clocks[i].id = vpu->variant->clk_names[i];
-	ret = devm_clk_bulk_get(&pdev->dev, vpu->variant->num_clocks,
-				vpu->clocks);
-	if (ret)
-		return ret;
+	if (vpu->variant->num_clocks > 1) {
+		for (i = 0; i < vpu->variant->num_clocks; i++)
+			vpu->clocks[i].id = vpu->variant->clk_names[i];
+
+		ret = devm_clk_bulk_get(&pdev->dev, vpu->variant->num_clocks,
+					vpu->clocks);
+		if (ret)
+			return ret;
+	} else {
+		/*
+		 * If the driver has a single clk, chances are there will be no
+		 * actual name in the DT bindings.
+		 */
+		vpu->clocks[0].clk = devm_clk_get(&pdev->dev, NULL);
+		if (IS_ERR(vpu->clocks))
+			return PTR_ERR(vpu->clocks);
+	}
 
 	num_bases = vpu->variant->num_regs ?: 1;
 	vpu->reg_bases = devm_kcalloc(&pdev->dev, num_bases,
@@ -796,13 +808,23 @@ static int hantro_probe(struct platform_device *pdev)
 	vb2_dma_contig_set_max_seg_size(&pdev->dev, DMA_BIT_MASK(32));
 
 	for (i = 0; i < vpu->variant->num_irqs; i++) {
-		const char *irq_name = vpu->variant->irqs[i].name;
+		const char *irq_name;
 		int irq;
 
 		if (!vpu->variant->irqs[i].handler)
 			continue;
 
-		irq = platform_get_irq_byname(vpu->pdev, irq_name);
+		if (vpu->variant->num_clocks > 1) {
+			irq_name = vpu->variant->irqs[i].name;
+			irq = platform_get_irq_byname(vpu->pdev, irq_name);
+		} else {
+			/*
+			 * If the driver has a single IRQ, chances are there
+			 * will be no actual name in the DT bindings.
+			 */
+			irq_name = "default";
+			irq = platform_get_irq(vpu->pdev, 0);
+		}
 		if (irq <= 0)
 			return -ENXIO;
 
