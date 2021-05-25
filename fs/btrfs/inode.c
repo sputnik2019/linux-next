@@ -3000,6 +3000,18 @@ out:
 	if (ret || truncated) {
 		u64 unwritten_start = start;
 
+		/*
+		 * If we failed to finish this ordered extent for any reason we
+		 * need to make sure BTRFS_ORDERED_IOERR is set on the ordered
+		 * extent, and mark the inode with the error if it wasn't
+		 * already set.  Any error during writeback would have already
+		 * set the mapping error, so we need to set it if we're the ones
+		 * marking this ordered extent as failed.
+		 */
+		if (ret && !test_and_set_bit(BTRFS_ORDERED_IOERR,
+					     &ordered_extent->flags))
+			mapping_set_error(ordered_extent->inode->i_mapping, -EIO);
+
 		if (truncated)
 			unwritten_start += logical_len;
 		clear_extent_uptodate(io_tree, unwritten_start, end, NULL);
@@ -3140,15 +3152,19 @@ zeroit:
  * @bio_offset:	offset to the beginning of the bio (in bytes)
  * @start:	file offset of the range start
  * @end:	file offset of the range end (inclusive)
+ *
+ * Return a bitmap where bit set means a csum mismatch, and bit not set means
+ * csum match.
  */
-int btrfs_verify_data_csum(struct btrfs_io_bio *io_bio, u32 bio_offset,
-			   struct page *page, u64 start, u64 end)
+unsigned int btrfs_verify_data_csum(struct btrfs_io_bio *io_bio, u32 bio_offset,
+				    struct page *page, u64 start, u64 end)
 {
 	struct inode *inode = page->mapping->host;
 	struct extent_io_tree *io_tree = &BTRFS_I(inode)->io_tree;
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	const u32 sectorsize = root->fs_info->sectorsize;
 	u32 pg_off;
+	unsigned int result = 0;
 
 	if (PageChecked(page)) {
 		ClearPageChecked(page);
@@ -3176,10 +3192,14 @@ int btrfs_verify_data_csum(struct btrfs_io_bio *io_bio, u32 bio_offset,
 
 		ret = check_data_csum(inode, io_bio, bio_offset, page, pg_off,
 				      page_offset(page) + pg_off);
-		if (ret < 0)
-			return -EIO;
+		if (ret < 0) {
+			const int nr_bit = (pg_off - offset_in_page(start)) >>
+				     root->fs_info->sectorsize_bits;
+
+			result |= (1U << nr_bit);
+		}
 	}
-	return 0;
+	return result;
 }
 
 /*
@@ -4452,20 +4472,36 @@ out:
 #define NEED_TRUNCATE_BLOCK 1
 
 /*
- * this can truncate away extent items, csum items and directory items.
- * It starts at a high offset and removes keys until it can't find
- * any higher than new_size
+ * Remove inode items from a given root.
  *
- * csum items that cross the new i_size are truncated to the new size
- * as well.
+ * @trans:		A transaction handle.
+ * @root:		The root from which to remove items.
+ * @inode:		The inode whose items we want to remove.
+ * @new_size:		The new i_size for the inode. This is only applicable when
+ *			@min_type is BTRFS_EXTENT_DATA_KEY, must be 0 otherwise.
+ * @min_type:		The minimum key type to remove. All keys with a type
+ *			greater than this value are removed and all keys with
+ *			this type are removed only if their offset is >= @new_size.
+ * @extents_found:	Output parameter that will contain the number of file
+ *			extent items that were removed or adjusted to the new
+ *			inode i_size. The caller is responsible for initializing
+ *			the counter. Also, it can be NULL if the caller does not
+ *			need this counter.
  *
- * min_type is the minimum key type to truncate down to.  If set to 0, this
- * will kill all the items on this inode, including the INODE_ITEM_KEY.
+ * Remove all keys associated with the inode from the given root that have a key
+ * with a type greater than or equals to @min_type. When @min_type has a value of
+ * BTRFS_EXTENT_DATA_KEY, only remove file extent items that have an offset value
+ * greater than or equals to @new_size. If a file extent item that starts before
+ * @new_size and ends after it is found, its length is adjusted.
+ *
+ * Returns: 0 on success, < 0 on error and NEED_TRUNCATE_BLOCK when @min_type is
+ * BTRFS_EXTENT_DATA_KEY and the caller must truncate the last block.
  */
 int btrfs_truncate_inode_items(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root,
 			       struct btrfs_inode *inode,
-			       u64 new_size, u32 min_type)
+			       u64 new_size, u32 min_type,
+			       u64 *extents_found)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_path *path;
@@ -4610,6 +4646,9 @@ search_again:
 		/* FIXME, shrink the extent if the ref count is only 1 */
 		if (found_type != BTRFS_EXTENT_DATA_KEY)
 			goto delete;
+
+		if (extents_found != NULL)
+			(*extents_found)++;
 
 		if (extent_type != BTRFS_FILE_EXTENT_INLINE) {
 			u64 num_dec;
@@ -5443,7 +5482,7 @@ void btrfs_evict_inode(struct inode *inode)
 		trans->block_rsv = rsv;
 
 		ret = btrfs_truncate_inode_items(trans, root, BTRFS_I(inode),
-						 0, 0);
+						 0, 0, NULL);
 		trans->block_rsv = &fs_info->trans_block_rsv;
 		btrfs_end_transaction(trans);
 		btrfs_btree_balance_dirty(fs_info);
@@ -7925,19 +7964,17 @@ static blk_status_t btrfs_check_read_dio_bio(struct inode *inode,
 						 btrfs_ino(BTRFS_I(inode)),
 						 pgoff);
 			} else {
-				blk_status_t status;
+				int ret;
 
 				ASSERT((start - io_bio->logical) < UINT_MAX);
-				status = btrfs_submit_read_repair(inode,
-							&io_bio->bio,
-							start - io_bio->logical,
-							bvec.bv_page, pgoff,
-							start,
-							start + sectorsize - 1,
-							io_bio->mirror_num,
-							submit_dio_repair_bio);
-				if (status)
-					err = status;
+				ret = btrfs_repair_one_sector(inode,
+						&io_bio->bio,
+						start - io_bio->logical,
+						bvec.bv_page, pgoff,
+						start, io_bio->mirror_num,
+						submit_dio_repair_bio);
+				if (ret)
+					err = errno_to_blk_status(ret);
 			}
 			start += sectorsize;
 			ASSERT(bio_offset + sectorsize > bio_offset);
@@ -8649,6 +8686,7 @@ static int btrfs_truncate(struct inode *inode, bool skip_writeback)
 	struct btrfs_trans_handle *trans;
 	u64 mask = fs_info->sectorsize - 1;
 	u64 min_size = btrfs_calc_metadata_size(fs_info, 1);
+	u64 extents_found = 0;
 
 	if (!skip_writeback) {
 		ret = btrfs_wait_ordered_range(inode, inode->i_size & (~mask),
@@ -8706,20 +8744,13 @@ static int btrfs_truncate(struct inode *inode, bool skip_writeback)
 				      min_size, false);
 	BUG_ON(ret);
 
-	/*
-	 * So if we truncate and then write and fsync we normally would just
-	 * write the extents that changed, which is a problem if we need to
-	 * first truncate that entire inode.  So set this flag so we write out
-	 * all of the extents in the inode to the sync log so we're completely
-	 * safe.
-	 */
-	set_bit(BTRFS_INODE_NEEDS_FULL_SYNC, &BTRFS_I(inode)->runtime_flags);
 	trans->block_rsv = rsv;
 
 	while (1) {
 		ret = btrfs_truncate_inode_items(trans, root, BTRFS_I(inode),
 						 inode->i_size,
-						 BTRFS_EXTENT_DATA_KEY);
+						 BTRFS_EXTENT_DATA_KEY,
+						 &extents_found);
 		trans->block_rsv = &fs_info->trans_block_rsv;
 		if (ret != -ENOSPC && ret != -EAGAIN)
 			break;
@@ -8781,6 +8812,22 @@ static int btrfs_truncate(struct inode *inode, bool skip_writeback)
 	}
 out:
 	btrfs_free_block_rsv(fs_info, rsv);
+	/*
+	 * So if we truncate and then write and fsync we normally would just
+	 * write the extents that changed, which is a problem if we need to
+	 * first truncate that entire inode.  So set this flag so we write out
+	 * all of the extents in the inode to the sync log so we're completely
+	 * safe.
+	 *
+	 * If no extents were dropped or trimmed we don't need to force the next
+	 * fsync to truncate all the inode's items from the log and re-log them
+	 * all. This means the truncate operation did not change the file size,
+	 * or changed it to a smaller size but there was only an implicit hole
+	 * between the old i_size and the new i_size, and there were no prealloc
+	 * extents beyond i_size to drop.
+	 */
+	if (extents_found > 0)
+		set_bit(BTRFS_INODE_NEEDS_FULL_SYNC, &BTRFS_I(inode)->runtime_flags);
 
 	return ret;
 }
@@ -9076,6 +9123,7 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 	int ret2;
 	bool root_log_pinned = false;
 	bool dest_log_pinned = false;
+	bool need_abort = false;
 
 	/* we only allow rename subvolume link between subvolumes */
 	if (old_ino != BTRFS_FIRST_FREE_OBJECTID && root != dest)
@@ -9135,6 +9183,7 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 					     old_idx);
 		if (ret)
 			goto out_fail;
+		need_abort = true;
 	}
 
 	/* And now for the dest. */
@@ -9150,8 +9199,11 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 					     new_ino,
 					     btrfs_ino(BTRFS_I(old_dir)),
 					     new_idx);
-		if (ret)
+		if (ret) {
+			if (need_abort)
+				btrfs_abort_transaction(trans, ret);
 			goto out_fail;
+		}
 	}
 
 	/* Update inode version and ctime/mtime. */

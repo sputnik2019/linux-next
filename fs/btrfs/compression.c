@@ -427,24 +427,16 @@ blk_status_t btrfs_submit_compressed_write(struct btrfs_inode *inode, u64 start,
 	bio->bi_end_io = end_compressed_bio_write;
 
 	if (use_append) {
-		struct extent_map *em;
-		struct map_lookup *map;
-		struct block_device *bdev;
+		struct btrfs_device *device;
 
-		em = btrfs_get_chunk_map(fs_info, disk_start, PAGE_SIZE);
-		if (IS_ERR(em)) {
+		device = btrfs_zoned_get_device(fs_info, disk_start, PAGE_SIZE);
+		if (IS_ERR(device)) {
 			kfree(cb);
 			bio_put(bio);
 			return BLK_STS_NOTSUPP;
 		}
 
-		map = em->map_lookup;
-		/* We only support single profile for now */
-		ASSERT(map->num_stripes == 1);
-		bdev = map->stripes[0].dev->bdev;
-
-		bio_set_dev(bio, bdev);
-		free_extent_map(em);
+		bio_set_dev(bio, device->bdev);
 	}
 
 	if (blkcg_css) {
@@ -457,7 +449,7 @@ blk_status_t btrfs_submit_compressed_write(struct btrfs_inode *inode, u64 start,
 	bytes_left = compressed_len;
 	for (pg_index = 0; pg_index < cb->nr_pages; pg_index++) {
 		int submit = 0;
-		int len;
+		int len = 0;
 
 		page = compressed_pages[pg_index];
 		page->mapping = inode->vfs_inode.i_mapping;
@@ -465,10 +457,17 @@ blk_status_t btrfs_submit_compressed_write(struct btrfs_inode *inode, u64 start,
 			submit = btrfs_bio_fits_in_stripe(page, PAGE_SIZE, bio,
 							  0);
 
-		if (pg_index == 0 && use_append)
-			len = bio_add_zone_append_page(bio, page, PAGE_SIZE, 0);
-		else
-			len = bio_add_page(bio, page, PAGE_SIZE, 0);
+		/*
+		 * Page can only be added to bio if the current bio fits in
+		 * stripe.
+		 */
+		if (!submit) {
+			if (pg_index == 0 && use_append)
+				len = bio_add_zone_append_page(bio, page,
+							       PAGE_SIZE, 0);
+			else
+				len = bio_add_page(bio, page, PAGE_SIZE, 0);
+		}
 
 		page->mapping = NULL;
 		if (submit || len < PAGE_SIZE) {
