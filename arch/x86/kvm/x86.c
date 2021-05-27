@@ -3105,6 +3105,8 @@ static void record_steal_time(struct kvm_vcpu *vcpu)
 				       st->preempted & KVM_VCPU_FLUSH_TLB);
 		if (xchg(&st->preempted, 0) & KVM_VCPU_FLUSH_TLB)
 			kvm_vcpu_flush_tlb_guest(vcpu);
+	} else {
+		st->preempted = 0;
 	}
 
 	vcpu->arch.st.preempted = 0;
@@ -8359,6 +8361,9 @@ static void kvm_sched_yield(struct kvm_vcpu *vcpu, unsigned long dest_id)
 	struct kvm_apic_map *map;
 
 	vcpu->stat.directed_yield_attempted++;
+
+	if (single_task_running())
+		goto no_yield;
 
 	rcu_read_lock();
 	map = rcu_dereference(vcpu->kvm->arch.apic_map);
