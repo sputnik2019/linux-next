@@ -211,6 +211,7 @@ config SND_SOC_ALL_CODECS
 	imply SND_SOC_TAS6424
 	imply SND_SOC_TDA7419
 	imply SND_SOC_TFA9879
+	imply SND_SOC_TFA989X
 	imply SND_SOC_TLV320ADCX140
 	imply SND_SOC_TLV320AIC23_I2C
 	imply SND_SOC_TLV320AIC23_SPI
@@ -1408,6 +1409,16 @@ config SND_SOC_TFA9879
 	tristate "NXP Semiconductors TFA9879 amplifier"
 	depends on I2C
 
+config SND_SOC_TFA989X
+	tristate "NXP/Goodix TFA989X (TFA1) amplifiers"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  Enable support for NXP (now Goodix) TFA989X (TFA1 family) speaker
+	  amplifiers, e.g. TFA9895.
+	  Note that the driver currently bypasses the built-in "CoolFlux DSP"
+	  and does not support (hardware) volume control.
+
 config SND_SOC_TLV320AIC23
 	tristate
 
@@ -1525,9 +1536,13 @@ config SND_SOC_WCD9335
 	  Qualcomm Technologies, Inc. (QTI) multimedia solutions,
 	  including the MSM8996, MSM8976, and MSM8956 chipsets.
 
+config SND_SOC_WCD_MBHC
+	tristate
+
 config SND_SOC_WCD934X
 	tristate "WCD9340/WCD9341 Codec"
 	depends on COMMON_CLK
+	select SND_SOC_WCD_MBHC
 	depends on MFD_WCD934X
 	help
 	  The WCD9340/9341 is a audio codec IC Integrated in
@@ -1871,18 +1886,22 @@ config SND_SOC_TPA6130A2
 
 config SND_SOC_LPASS_WSA_MACRO
 	depends on COMMON_CLK
+	select REGMAP_MMIO
 	tristate "Qualcomm WSA Macro in LPASS(Low Power Audio SubSystem)"
 
 config SND_SOC_LPASS_VA_MACRO
 	depends on COMMON_CLK
+	select REGMAP_MMIO
 	tristate "Qualcomm VA Macro in LPASS(Low Power Audio SubSystem)"
 
 config SND_SOC_LPASS_RX_MACRO
 	depends on COMMON_CLK
+	select REGMAP_MMIO
 	tristate "Qualcomm RX Macro in LPASS(Low Power Audio SubSystem)"
 
 config SND_SOC_LPASS_TX_MACRO
 	depends on COMMON_CLK
+	select REGMAP_MMIO
 	tristate "Qualcomm TX Macro in LPASS(Low Power Audio SubSystem)"
 
 endmenu
