@@ -44,6 +44,8 @@ struct io_uring_sqe {
 		__u32		splice_flags;
 		__u32		rename_flags;
 		__u32		unlink_flags;
+		__u32		hardlink_flags;
+		__u32		mknod_dev;
 	};
 	__u64	user_data;	/* data to be passed back at completion time */
 	union {
@@ -137,6 +139,10 @@ enum {
 	IORING_OP_SHUTDOWN,
 	IORING_OP_RENAMEAT,
 	IORING_OP_UNLINKAT,
+	IORING_OP_MKDIRAT,
+	IORING_OP_SYMLINKAT,
+	IORING_OP_LINKAT,
+	IORING_OP_MKNODAT,
 
 	/* this goes last, obviously */
 	IORING_OP_LAST,
