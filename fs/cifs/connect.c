@@ -3480,7 +3480,8 @@ int cifs_mount(struct cifs_sb_info *cifs_sb, struct smb3_fs_context *ctx)
 		goto error;
 	}
 	spin_lock(&cifs_tcp_ses_lock);
-	tcon->dfs_path = ref_path;
+	if (tcon)
+		tcon->dfs_path = ref_path;
 	ref_path = NULL;
 	spin_unlock(&cifs_tcp_ses_lock);
 
