@@ -1012,8 +1012,6 @@ struct btrfs_fs_info {
 		u64 zoned;
 	};
 
-	/* Max size to emit ZONE_APPEND write command */
-	u64 max_zone_append_size;
 	struct mutex zoned_meta_io_lock;
 	spinlock_t treelog_bg_lock;
 	u64 treelog_bg;
@@ -2901,7 +2899,6 @@ static inline int btrfs_insert_empty_item(struct btrfs_trans_handle *trans,
 	return btrfs_insert_empty_items(trans, root, path, key, &data_size, 1);
 }
 
-int btrfs_next_leaf(struct btrfs_root *root, struct btrfs_path *path);
 int btrfs_prev_leaf(struct btrfs_root *root, struct btrfs_path *path);
 int btrfs_next_old_leaf(struct btrfs_root *root, struct btrfs_path *path,
 			u64 time_seq);
@@ -2913,6 +2910,18 @@ static inline int btrfs_next_old_item(struct btrfs_root *root,
 		return btrfs_next_old_leaf(root, p, time_seq);
 	return 0;
 }
+
+/*
+ * Search the tree again to find a leaf with greater keys.
+ *
+ * Returns 0 if it found something or 1 if there are no greater leaves.
+ * Returns < 0 on error.
+ */
+static inline int btrfs_next_leaf(struct btrfs_root *root, struct btrfs_path *path)
+{
+	return btrfs_next_old_leaf(root, path, 0);
+}
+
 static inline int btrfs_next_item(struct btrfs_root *root, struct btrfs_path *p)
 {
 	return btrfs_next_old_item(root, p, 0);
@@ -3194,10 +3203,10 @@ int btrfs_prealloc_file_range_trans(struct inode *inode,
 int btrfs_run_delalloc_range(struct btrfs_inode *inode, struct page *locked_page,
 		u64 start, u64 end, int *page_started, unsigned long *nr_written,
 		struct writeback_control *wbc);
-int btrfs_writepage_cow_fixup(struct page *page, u64 start, u64 end);
+int btrfs_writepage_cow_fixup(struct page *page);
 void btrfs_writepage_endio_finish_ordered(struct btrfs_inode *inode,
 					  struct page *page, u64 start,
-					  u64 end, int uptodate);
+					  u64 end, bool uptodate);
 extern const struct dentry_operations btrfs_dentry_operations;
 extern const struct iomap_ops btrfs_dio_iomap_ops;
 extern const struct iomap_dio_ops btrfs_dio_ops;
