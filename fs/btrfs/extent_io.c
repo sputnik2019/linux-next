@@ -2682,7 +2682,7 @@ int btrfs_repair_one_sector(struct inode *inode,
 
 static void end_page_read(struct page *page, bool uptodate, u64 start, u32 len)
 {
-	struct btrfs_fs_info *fs_info = btrfs_sb(page->mapping->host->i_sb);
+	struct btrfs_fs_info *fs_info = page_to_fs_info(page);
 
 	ASSERT(page_offset(page) <= start &&
 	       start + len <= page_offset(page) + PAGE_SIZE);
@@ -2779,11 +2779,11 @@ next:
 void end_extent_writepage(struct page *page, int err, u64 start, u64 end)
 {
 	struct btrfs_inode *inode;
-	int uptodate = (err == 0);
+	const bool uptodate = (err == 0);
 	int ret = 0;
 
 	ASSERT(page && page->mapping);
-	inode = BTRFS_I(page->mapping->host);
+	inode = page_to_inode(page);
 	btrfs_writepage_endio_finish_ordered(inode, page, start, end, uptodate);
 
 	if (!uptodate) {
@@ -2815,8 +2815,8 @@ static void end_bio_extent_writepage(struct bio *bio)
 	ASSERT(!bio_flagged(bio, BIO_CLONED));
 	bio_for_each_segment_all(bvec, bio, iter_all) {
 		struct page *page = bvec->bv_page;
-		struct inode *inode = page->mapping->host;
-		struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
+		struct btrfs_inode *inode = page_to_inode(page);
+		struct btrfs_fs_info *fs_info = inode->root->fs_info;
 		const u32 sectorsize = fs_info->sectorsize;
 
 		/* Our read/write should always be sector aligned. */
@@ -2833,7 +2833,7 @@ static void end_bio_extent_writepage(struct bio *bio)
 		end = start + bvec->bv_len - 1;
 
 		if (first_bvec) {
-			btrfs_record_physical_zoned(inode, start, bio);
+			btrfs_record_physical_zoned(&inode->vfs_inode, start, bio);
 			first_bvec = false;
 		}
 
@@ -3266,7 +3266,6 @@ static int calc_bio_boundaries(struct btrfs_bio_ctrl *bio_ctrl,
 		return 0;
 	}
 
-	ASSERT(fs_info->max_zone_append_size > 0);
 	/* Ordered extent not yet created, so we're good */
 	ordered = btrfs_lookup_ordered_extent(inode, logical);
 	if (!ordered) {
@@ -3307,7 +3306,7 @@ static int submit_extent_page(unsigned int opf,
 	int ret = 0;
 	struct bio *bio;
 	size_t io_size = min_t(size_t, size, PAGE_SIZE);
-	struct btrfs_inode *inode = BTRFS_I(page->mapping->host);
+	struct btrfs_inode *inode = page_to_inode(page);
 	struct extent_io_tree *tree = &inode->io_tree;
 	struct btrfs_fs_info *fs_info = inode->root->fs_info;
 
@@ -3335,7 +3334,7 @@ static int submit_extent_page(unsigned int opf,
 	bio_add_page(bio, page, io_size, pg_offset);
 	bio->bi_end_io = end_io_func;
 	bio->bi_private = tree;
-	bio->bi_write_hint = page->mapping->host->i_write_hint;
+	bio->bi_write_hint = inode->vfs_inode.i_write_hint;
 	bio->bi_opf = opf;
 	if (wbc) {
 		struct block_device *bdev;
@@ -3411,8 +3410,7 @@ int set_page_extent_mapped(struct page *page)
 	if (PagePrivate(page))
 		return 0;
 
-	fs_info = btrfs_sb(page->mapping->host->i_sb);
-
+	fs_info = page_to_fs_info(page);
 	if (fs_info->sectorsize < PAGE_SIZE)
 		return btrfs_attach_subpage(fs_info, page, BTRFS_SUBPAGE_DATA);
 
@@ -3429,7 +3427,7 @@ void clear_page_extent_mapped(struct page *page)
 	if (!PagePrivate(page))
 		return;
 
-	fs_info = btrfs_sb(page->mapping->host->i_sb);
+	fs_info = page_to_fs_info(page);
 	if (fs_info->sectorsize < PAGE_SIZE)
 		return btrfs_detach_subpage(fs_info, page);
 
@@ -3671,7 +3669,7 @@ static inline void contiguous_readpages(struct page *pages[], int nr_pages,
 					struct btrfs_bio_ctrl *bio_ctrl,
 					u64 *prev_em_start)
 {
-	struct btrfs_inode *inode = BTRFS_I(pages[0]->mapping->host);
+	struct btrfs_inode *inode = page_to_inode(pages[0]);
 	int index;
 
 	btrfs_lock_and_flush_ordered_range(inode, start, end, NULL);
@@ -3829,9 +3827,8 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 				 int *nr_ret)
 {
 	struct btrfs_fs_info *fs_info = inode->root->fs_info;
-	u64 start = page_offset(page);
-	u64 end = start + PAGE_SIZE - 1;
-	u64 cur = start;
+	u64 cur = page_offset(page);
+	u64 end = cur + PAGE_SIZE - 1;
 	u64 extent_offset;
 	u64 block_start;
 	struct extent_map *em;
@@ -3841,7 +3838,7 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 	const unsigned int write_flags = wbc_to_write_flags(wbc);
 	bool compressed;
 
-	ret = btrfs_writepage_cow_fixup(page, start, end);
+	ret = btrfs_writepage_cow_fixup(page);
 	if (ret) {
 		/* Fixup worker will requeue */
 		redirty_page_for_writepage(wbc, page);
@@ -3865,7 +3862,7 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 
 		if (cur >= i_size) {
 			btrfs_writepage_endio_finish_ordered(inode, page, cur,
-							     end, 1);
+							     end, true);
 			break;
 		}
 
@@ -3915,7 +3912,7 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 				nr++;
 			else
 				btrfs_writepage_endio_finish_ordered(inode,
-						page, cur, cur + iosize - 1, 1);
+						page, cur, cur + iosize - 1, true);
 			cur += iosize;
 			continue;
 		}
@@ -4260,7 +4257,7 @@ static void end_bio_subpage_eb_writepage(struct bio *bio)
 	struct bio_vec *bvec;
 	struct bvec_iter_all iter_all;
 
-	fs_info = btrfs_sb(bio_first_page_all(bio)->mapping->host->i_sb);
+	fs_info = bio_to_fs_info(bio);
 	ASSERT(fs_info->sectorsize < PAGE_SIZE);
 
 	ASSERT(!bio_flagged(bio, BIO_CLONED));
@@ -4482,7 +4479,7 @@ static int submit_eb_subpage(struct page *page,
 			     struct writeback_control *wbc,
 			     struct extent_page_data *epd)
 {
-	struct btrfs_fs_info *fs_info = btrfs_sb(page->mapping->host->i_sb);
+	struct btrfs_fs_info *fs_info = page_to_fs_info(page);
 	int submitted = 0;
 	u64 page_start = page_offset(page);
 	int bit_start = 0;
@@ -4588,7 +4585,7 @@ static int submit_eb_page(struct page *page, struct writeback_control *wbc,
 	if (!PagePrivate(page))
 		return 0;
 
-	if (btrfs_sb(page->mapping->host->i_sb)->sectorsize < PAGE_SIZE)
+	if (page_to_fs_info(page)->sectorsize < PAGE_SIZE)
 		return submit_eb_subpage(page, wbc, epd);
 
 	spin_lock(&mapping->private_lock);
@@ -4984,7 +4981,7 @@ int extent_write_locked_range(struct inode *inode, u64 start, u64 end,
 			ret = __extent_writepage(page, &wbc_writepages, &epd);
 		else {
 			btrfs_writepage_endio_finish_ordered(BTRFS_I(inode),
-					page, start, start + PAGE_SIZE - 1, 1);
+					page, start, start + PAGE_SIZE - 1, true);
 			unlock_page(page);
 		}
 		put_page(page);
@@ -5124,7 +5121,7 @@ int try_release_extent_mapping(struct page *page, gfp_t mask)
 	struct extent_map *em;
 	u64 start = page_offset(page);
 	u64 end = start + PAGE_SIZE - 1;
-	struct btrfs_inode *btrfs_inode = BTRFS_I(page->mapping->host);
+	struct btrfs_inode *btrfs_inode = page_to_inode(page);
 	struct extent_io_tree *tree = &btrfs_inode->io_tree;
 	struct extent_map_tree *map = &btrfs_inode->extent_tree;
 
@@ -7082,7 +7079,7 @@ static struct extent_buffer *get_next_extent_buffer(
 
 static int try_release_subpage_extent_buffer(struct page *page)
 {
-	struct btrfs_fs_info *fs_info = btrfs_sb(page->mapping->host->i_sb);
+	struct btrfs_fs_info *fs_info = page_to_fs_info(page);
 	u64 cur = page_offset(page);
 	const u64 end = page_offset(page) + PAGE_SIZE;
 	int ret;
@@ -7154,7 +7151,7 @@ int try_release_extent_buffer(struct page *page)
 {
 	struct extent_buffer *eb;
 
-	if (btrfs_sb(page->mapping->host->i_sb)->sectorsize < PAGE_SIZE)
+	if (page_to_fs_info(page)->sectorsize < PAGE_SIZE)
 		return try_release_subpage_extent_buffer(page);
 
 	/*
