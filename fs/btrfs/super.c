@@ -1353,6 +1353,9 @@ static int btrfs_fill_super(struct super_block *sb,
 	sb->s_op = &btrfs_super_ops;
 	sb->s_d_op = &btrfs_dentry_operations;
 	sb->s_export_op = &btrfs_export_ops;
+#ifdef CONFIG_FS_VERITY
+	sb->s_vop = &btrfs_verityops;
+#endif
 	sb->s_xattr = btrfs_xattr_handlers;
 	sb->s_time_gran = 1;
 #ifdef CONFIG_BTRFS_FS_POSIX_ACL
@@ -2017,7 +2020,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		if (ret)
 			goto restore;
 	} else {
-		if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state)) {
+		if (btrfs_has_fs_error(fs_info)) {
 			btrfs_err(fs_info,
 				"Remounting read-write after error is not allowed");
 			ret = -EINVAL;
@@ -2038,13 +2041,6 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		if (btrfs_super_log_root(fs_info->super_copy) != 0) {
 			btrfs_warn(fs_info,
 		"mount required to replay tree-log, cannot remount read-write");
-			ret = -EINVAL;
-			goto restore;
-		}
-		if (fs_info->sectorsize < PAGE_SIZE) {
-			btrfs_warn(fs_info,
-	"read-write mount is not yet allowed for sectorsize %u page size %lu",
-				   fs_info->sectorsize, PAGE_SIZE);
 			ret = -EINVAL;
 			goto restore;
 		}
@@ -2096,16 +2092,15 @@ restore:
 }
 
 /* Used to sort the devices by max_avail(descending sort) */
-static inline int btrfs_cmp_device_free_bytes(const void *dev_info1,
-				       const void *dev_info2)
+static int btrfs_cmp_device_free_bytes(const void *a, const void *b)
 {
-	if (((struct btrfs_device_info *)dev_info1)->max_avail >
-	    ((struct btrfs_device_info *)dev_info2)->max_avail)
+	const struct btrfs_device_info *dev_info1 = a;
+	const struct btrfs_device_info *dev_info2 = b;
+
+	if (dev_info1->max_avail > dev_info2->max_avail)
 		return -1;
-	else if (((struct btrfs_device_info *)dev_info1)->max_avail <
-		 ((struct btrfs_device_info *)dev_info2)->max_avail)
+	else if (dev_info1->max_avail < dev_info2->max_avail)
 		return 1;
-	else
 	return 0;
 }
 
