@@ -212,6 +212,7 @@ int
 cifs_reconnect(struct TCP_Server_Info *server)
 {
 	int rc = 0;
+	struct TCP_Server_Info *pserver;
 	struct list_head *tmp, *tmp2;
 	struct cifs_ses *ses;
 	struct cifs_tcon *tcon;
@@ -223,6 +224,9 @@ cifs_reconnect(struct TCP_Server_Info *server)
 	struct dfs_cache_tgt_list tgt_list = DFS_CACHE_TGT_LIST_INIT(tgt_list);
 	struct dfs_cache_tgt_iterator *tgt_it = NULL;
 #endif
+
+	/* If server is a channel, select the primary channel */
+	pserver = CIFS_SERVER_IS_CHAN(server) ? server->primary_server : server;
 
 	spin_lock(&GlobalMid_Lock);
 	server->nr_targets = 1;
@@ -275,7 +279,7 @@ cifs_reconnect(struct TCP_Server_Info *server)
 	cifs_dbg(FYI, "%s: marking sessions and tcons for reconnect\n",
 		 __func__);
 	spin_lock(&cifs_tcp_ses_lock);
-	list_for_each(tmp, &server->smb_ses_list) {
+	list_for_each(tmp, &pserver->smb_ses_list) {
 		ses = list_entry(tmp, struct cifs_ses, smb_ses_list);
 		ses->need_reconnect = true;
 		list_for_each(tmp2, &ses->tcon_list) {
@@ -1282,7 +1286,7 @@ cifs_find_tcp_session(struct smb3_fs_context *ctx)
 		 * Skip ses channels since they're only handled in lower layers
 		 * (e.g. cifs_send_recv).
 		 */
-		if (server->is_channel || !match_server(server, ctx))
+		if (CIFS_SERVER_IS_CHAN(server) || !match_server(server, ctx))
 			continue;
 
 		++server->srv_count;
@@ -1313,6 +1317,10 @@ cifs_put_tcp_session(struct TCP_Server_Info *server, int from_reconnect)
 	list_del_init(&server->tcp_ses_list);
 	spin_unlock(&cifs_tcp_ses_lock);
 
+	/* For secondary channels, we pick up ref-count on the primary server */
+	if (CIFS_SERVER_IS_CHAN(server))
+		cifs_put_tcp_session(server->primary_server, from_reconnect);
+
 	cancel_delayed_work_sync(&server->echo);
 	cancel_delayed_work_sync(&server->resolve);
 
@@ -1332,7 +1340,10 @@ cifs_put_tcp_session(struct TCP_Server_Info *server, int from_reconnect)
 	spin_unlock(&GlobalMid_Lock);
 
 	cifs_crypto_secmech_release(server);
-	cifs_fscache_release_client_cookie(server);
+
+	/* fscache server cookies are based on primary channel only */
+	if (!CIFS_SERVER_IS_CHAN(server))
+		cifs_fscache_release_client_cookie(server);
 
 	kfree(server->session_key.response);
 	server->session_key.response = NULL;
@@ -1344,7 +1355,8 @@ cifs_put_tcp_session(struct TCP_Server_Info *server, int from_reconnect)
 }
 
 struct TCP_Server_Info *
-cifs_get_tcp_session(struct smb3_fs_context *ctx)
+cifs_get_tcp_session(struct smb3_fs_context *ctx,
+		     struct TCP_Server_Info *primary_server)
 {
 	struct TCP_Server_Info *tcp_ses = NULL;
 	int rc;
@@ -1369,6 +1381,11 @@ cifs_get_tcp_session(struct smb3_fs_context *ctx)
 	if (IS_ERR(tcp_ses->hostname)) {
 		rc = PTR_ERR(tcp_ses->hostname);
 		goto out_err_crypto_release;
+	}
+
+	if (primary_server) {
+		++primary_server->srv_count;
+		tcp_ses->primary_server = primary_server;
 	}
 
 	tcp_ses->conn_id = atomic_inc_return(&tcpSesNextId);
@@ -1478,7 +1495,9 @@ smbd_connected:
 	list_add(&tcp_ses->tcp_ses_list, &cifs_tcp_ses_list);
 	spin_unlock(&cifs_tcp_ses_lock);
 
-	cifs_fscache_get_client_cookie(tcp_ses);
+	/* fscache server cookies are based on primary channel only */
+	if (!CIFS_SERVER_IS_CHAN(tcp_ses))
+		cifs_fscache_get_client_cookie(tcp_ses);
 
 	/* queue echo request delayed work */
 	queue_delayed_work(cifsiod_wq, &tcp_ses->echo, tcp_ses->echo_interval);
@@ -1498,6 +1517,8 @@ out_err_crypto_release:
 
 out_err:
 	if (tcp_ses) {
+		if (CIFS_SERVER_IS_CHAN(tcp_ses))
+			cifs_put_tcp_session(tcp_ses->primary_server, false);
 		if (!IS_ERR(tcp_ses->hostname))
 			kfree(tcp_ses->hostname);
 		if (tcp_ses->ssocket)
@@ -1517,8 +1538,12 @@ static int match_session(struct cifs_ses *ses, struct smb3_fs_context *ctx)
 	 * If an existing session is limited to less channels than
 	 * requested, it should not be reused
 	 */
-	if (ses->chan_max < ctx->max_channels)
+	spin_lock(&ses->chan_lock);
+	if (ses->chan_max < ctx->max_channels) {
+		spin_unlock(&ses->chan_lock);
 		return 0;
+	}
+	spin_unlock(&ses->chan_lock);
 
 	switch (ses->sectype) {
 	case Kerberos:
@@ -1649,6 +1674,7 @@ cifs_find_smb_ses(struct TCP_Server_Info *server, struct smb3_fs_context *ctx)
 void cifs_put_smb_ses(struct cifs_ses *ses)
 {
 	unsigned int rc, xid;
+	unsigned int chan_count;
 	struct TCP_Server_Info *server = ses->server;
 	cifs_dbg(FYI, "%s: ses_count=%d\n", __func__, ses->ses_count);
 
@@ -1690,12 +1716,24 @@ void cifs_put_smb_ses(struct cifs_ses *ses)
 	list_del_init(&ses->smb_ses_list);
 	spin_unlock(&cifs_tcp_ses_lock);
 
+	spin_lock(&ses->chan_lock);
+	chan_count = ses->chan_count;
+	spin_unlock(&ses->chan_lock);
+
 	/* close any extra channels */
-	if (ses->chan_count > 1) {
+	if (chan_count > 1) {
 		int i;
 
-		for (i = 1; i < ses->chan_count; i++)
+		for (i = 1; i < chan_count; i++) {
+			/*
+			 * note: for now, we're okay accessing ses->chans
+			 * without chan_lock. But when chans can go away, we'll
+			 * need to introduce ref counting to make sure that chan
+			 * is not freed from under us.
+			 */
 			cifs_put_tcp_session(ses->chans[i].server, 0);
+			ses->chans[i].server = NULL;
+		}
 	}
 
 	sesInfoFree(ses);
@@ -1877,16 +1915,18 @@ cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb3_fs_context *ctx)
 			 ses->status);
 
 		mutex_lock(&ses->session_mutex);
-		rc = cifs_negotiate_protocol(xid, ses);
-		if (rc) {
-			mutex_unlock(&ses->session_mutex);
-			/* problem -- put our ses reference */
-			cifs_put_smb_ses(ses);
-			free_xid(xid);
-			return ERR_PTR(rc);
-		}
 		if (ses->need_reconnect) {
 			cifs_dbg(FYI, "Session needs reconnect\n");
+
+			rc = cifs_negotiate_protocol(xid, ses);
+			if (rc) {
+				mutex_unlock(&ses->session_mutex);
+				/* problem -- put our ses reference */
+				cifs_put_smb_ses(ses);
+				free_xid(xid);
+				return ERR_PTR(rc);
+			}
+
 			rc = cifs_setup_session(xid, ses,
 						ctx->local_nls);
 			if (rc) {
@@ -1944,9 +1984,11 @@ cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb3_fs_context *ctx)
 	mutex_lock(&ses->session_mutex);
 
 	/* add server as first channel */
+	spin_lock(&ses->chan_lock);
 	ses->chans[0].server = server;
 	ses->chan_count = 1;
 	ses->chan_max = ctx->multichannel ? ctx->max_channels:1;
+	spin_unlock(&ses->chan_lock);
 
 	rc = cifs_negotiate_protocol(xid, ses);
 	if (!rc)
@@ -2872,7 +2914,7 @@ static int mount_get_conns(struct smb3_fs_context *ctx, struct cifs_sb_info *cif
 	*xid = get_xid();
 
 	/* get a reference to a tcp session */
-	server = cifs_get_tcp_session(ctx);
+	server = cifs_get_tcp_session(ctx, NULL);
 	if (IS_ERR(server)) {
 		rc = PTR_ERR(server);
 		return rc;
